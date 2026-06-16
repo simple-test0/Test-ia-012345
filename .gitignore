@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.env
+*.env.local
+
+# PyTorch / ML
+*.pt
+*.pth
+*.onnx
+*.bin
+*.ckpt
+*.safetensors
+
+# Data (runtime, not committed)
+data/db/
+data/images/
+data/models/
+data/datasets/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+logs/
+
+# Alembic
+backend/migrations/versions/
+
+# Kaggle
+.kaggle/
