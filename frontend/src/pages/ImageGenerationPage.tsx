@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, ImageIcon, ChevronDown } from 'lucide-react'
-import { generateImage, getModels, getJobs } from '../../api/image'
-import { useWebSocket } from '../../hooks/useWebSocket'
-import { WS_BASE } from '../../api/client'
+import { generateImage, getModels, getJobs } from '../api/image'
+import { useWebSocket } from '../hooks/useWebSocket'
+import { WS_BASE } from '../api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

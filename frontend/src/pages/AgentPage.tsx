@@ -5,9 +5,9 @@ import {
   getTools,
   getSessions,
   createSession,
-} from '../../api/agent'
-import { useWebSocket } from '../../hooks/useWebSocket'
-import { WS_BASE } from '../../api/client'
+} from '../api/agent'
+import { useWebSocket } from '../hooks/useWebSocket'
+import { WS_BASE } from '../api/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
