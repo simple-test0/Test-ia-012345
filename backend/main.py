@@ -28,7 +28,30 @@ async def lifespan(app: FastAPI):
     queue: asyncio.Queue = asyncio.Queue(maxsize=settings.max_queue_size)
     worker = GenerationWorker(queue)
     worker_task = asyncio.create_task(worker.run())
+
+    def _log_worker_exit(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Generation worker exited unexpectedly: %s", exc, exc_info=exc)
+
+    worker_task.add_done_callback(_log_worker_exit)
     app.state.generation_queue = queue
+
+    # Log the detected accelerator once at startup for easier diagnostics.
+    try:
+        from hardware.detector import detect_hardware
+
+        hw = detect_hardware()
+        logger.info(
+            "Accelerator: %s | GPUs: %s | RAM: %d MB",
+            hw.accelerator_backend,
+            [g.name for g in hw.gpus] or "none",
+            hw.ram_total_mb,
+        )
+    except Exception:
+        logger.warning("Hardware detection failed at startup", exc_info=True)
 
     logger.info("AI Studio backend started")
     yield
@@ -41,6 +64,9 @@ async def lifespan(app: FastAPI):
 
     from services.image_gen.pipeline_manager import pipeline_manager
     await pipeline_manager.unload_all()
+
+    from services.agent.ollama_client import ollama_client
+    await ollama_client.aclose()
     logger.info("AI Studio backend stopped")
 
 
@@ -53,7 +79,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

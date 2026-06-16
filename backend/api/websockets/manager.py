@@ -1,8 +1,11 @@
 import asyncio
+import logging
 from collections import defaultdict
 from typing import Any, Dict, List
 
 from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -38,11 +41,16 @@ class ConnectionManager:
     async def broadcast(self, data: Any) -> None:
         async with self._lock:
             all_conns = [ws for conns in self._connections.values() for ws in conns]
+        dead = []
         for ws in all_conns:
             try:
                 await ws.send_json(data)
             except Exception:
-                pass
+                logger.debug("Dropping dead websocket during broadcast", exc_info=True)
+                dead.append(ws)
+        for ws in dead:
+            for room_id in list(self._connections.keys()):
+                await self.disconnect(room_id, ws)
 
     def room_count(self, room_id: str) -> int:
         return len(self._connections.get(room_id, []))

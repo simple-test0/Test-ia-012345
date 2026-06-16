@@ -43,7 +43,7 @@ def _training_process(
             raise ValueError(f"Unknown architecture: {arch_id}")
         model = spec.builder(arch_config)
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device(_pick_training_device(torch))
         model = model.to(device)
 
         num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -76,10 +76,12 @@ def _training_process(
         batch_size = training_config.get("batch_size", 16)
         train_loader = DataLoader(
             train_ds, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=device.type == "cuda"
+            num_workers=num_workers, pin_memory=device.type == "cuda",
+            persistent_workers=num_workers > 0,
         )
         val_loader = DataLoader(
-            val_ds, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers
+            val_ds, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers,
+            persistent_workers=num_workers > 0,
         )
 
         # ── Optimizer + Scheduler ─────────────────────────────────────────────
@@ -89,7 +91,11 @@ def _training_process(
         epochs = training_config.get("epochs", 10)
         grad_clip = training_config.get("gradient_clip_norm", 1.0)
         grad_accum = training_config.get("gradient_accumulation_steps", 1)
-        use_amp = training_config.get("use_mixed_precision", "fp16") != "no" and device.type == "cuda"
+        # Mixed precision: only on CUDA/ROCm/XPU. bf16 needs no loss scaling; fp16 does.
+        precision = training_config.get("use_mixed_precision", "fp16")
+        use_amp = precision != "no" and device.type in ("cuda", "xpu")
+        amp_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+        use_scaler = use_amp and amp_dtype == torch.float16
 
         if optimizer_name == "adamw":
             optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
@@ -113,7 +119,7 @@ def _training_process(
             scheduler = None
 
         criterion = nn.CrossEntropyLoss()
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        scaler = torch.amp.GradScaler(device.type, enabled=use_scaler)
         checkpoint_dir_path = Path(checkpoint_dir)
         checkpoint_dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -144,7 +150,7 @@ def _training_process(
 
                 inputs, labels = inputs.to(device), labels.to(device)
 
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
                     outputs = model(inputs)
                     loss = criterion(outputs, labels) / grad_accum
 
@@ -185,7 +191,7 @@ def _training_process(
             with torch.no_grad():
                 for inputs, labels in val_loader:
                     inputs, labels = inputs.to(device), labels.to(device)
-                    with torch.cuda.amp.autocast(enabled=use_amp):
+                    with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
                         outputs = model(inputs)
                         loss = criterion(outputs, labels)
                     val_loss += loss.item()
@@ -227,6 +233,37 @@ def _training_process(
     except Exception as exc:
         import traceback
         emit({"type": "error", "message": str(exc), "traceback": traceback.format_exc()})
+
+
+def _pick_training_device(torch) -> str:
+    """Best available torch device for training, honouring DEVICE_PREFERENCE.
+
+    Supports NVIDIA CUDA, AMD ROCm (reported as cuda), Intel XPU, Apple MPS and
+    CPU. Kept self-contained so it works inside the training subprocess.
+    """
+    try:
+        from core.config import settings
+
+        if settings.device_preference:
+            return settings.device_preference
+    except Exception:
+        pass
+    try:
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    try:
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            return "xpu"
+    except Exception:
+        pass
+    try:
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
 
 
 def _make_dummy_dataset(arch_config, num_classes, size=1000):

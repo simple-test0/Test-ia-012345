@@ -82,7 +82,7 @@ class GenerationWorker:
                             img.thumbnail((256, 256))
                             preview_b64 = image_to_base64(img)
                     except Exception:
-                        pass
+                        logger.debug("Live preview decode failed at step %d", step_index, exc_info=True)
 
                 asyncio.run_coroutine_threadsafe(
                     ws_manager.send(job_id, {
@@ -100,7 +100,9 @@ class GenerationWorker:
                 seed = random.randint(0, 2**32 - 1)
 
             import torch
-            generator = torch.Generator(device="cuda" if torch.cuda.is_available() else "cpu")
+            # A CPU generator is portable across CUDA/ROCm/XPU/MPS/CPU and keeps
+            # seeds reproducible even when components are offloaded between devices.
+            generator = torch.Generator(device="cpu")
             generator.manual_seed(seed)
 
             generate_kwargs = dict(
@@ -145,6 +147,7 @@ class GenerationWorker:
                 img = PILImage.open(p)
                 image_b64s.append(image_to_base64(img, "PNG"))
             except Exception:
+                logger.warning("Could not encode result image %s", p, exc_info=True)
                 image_b64s.append(None)
 
         async with AsyncSessionLocal() as db:
