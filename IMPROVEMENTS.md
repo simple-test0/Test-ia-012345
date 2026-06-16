@@ -59,7 +59,25 @@ la sélection du device :
 - LLM : recommandations modernisées (Qwen2.5 / Qwen2.5-Coder, Llama 3.2/3.3,
   DeepSeek-R1, Gemma 2, Phi-4-mini) par palier de mémoire.
 
-## 5. Pistes restantes (suggestions)
+## 5. Petites configs & choix du modèle
+
+- **Bugs de contrat WS corrigés** (l'app ne s'affichait pas correctement) :
+  - Agent : `/agent/models` renvoie `{available, models[]}` ; le frontend
+    attendait un tableau d'objets → `data[0].id` plantait. Corrigé.
+  - Image : events `step.total` (vs `total_steps`) et `completed.images_b64`
+    (vs `images`) ré-alignés ; position de file lue depuis la réponse POST.
+- **Sélection de modèle réelle** :
+  - L'image expose désormais `compatible` / `gated` / `min_vram_mb` / `family` et
+    applique automatiquement les réglages recommandés du modèle (steps, CFG,
+    résolution). Défaut = premier modèle **compatible**, modèles triés.
+  - Résolutions proposées **bornées par le matériel** (jusqu'à `max_resolution`
+    recommandé) + paliers plus bas (256/384) pour les petites machines.
+- **Petites configs plus fluides** :
+  - Preview latente (décodage VAE par étape) **désactivée sur CPU** et **throttlée**
+    (≈8 aperçus/run) ailleurs — évite que la preview domine le temps de calcul.
+  - `sd15` toujours disponible (min VRAM 0) ; offload CPU/séquentiel automatique.
+
+## 6. Pistes restantes (suggestions)
 
 - **Multi-GPU réel** : sharding / `device_map="balanced"` (accelerate) au lieu de
   n'utiliser que le GPU primaire ; agréger la VRAM pour les gros modèles.

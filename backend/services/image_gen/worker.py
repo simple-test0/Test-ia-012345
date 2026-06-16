@@ -62,12 +62,26 @@ class GenerationWorker:
             loop = self._loop
             step_data = {"current": 0}
 
+            # Live previews are expensive (a VAE decode per shown step). Skip them
+            # entirely on CPU and throttle to a handful per run elsewhere so small
+            # configs stay responsive.
+            from hardware.detector import detect_hardware
+            backend = detect_hardware().accelerator_backend
+            total_steps = max(1, int(job["steps"]))
+            preview_enabled = settings.enable_live_preview and backend != "cpu"
+            preview_interval = max(1, total_steps // 8)
+
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 step_data["current"] = step_index + 1
                 latents = callback_kwargs.get("latents")
                 preview_b64 = None
 
-                if latents is not None:
+                show_preview = (
+                    preview_enabled
+                    and latents is not None
+                    and (step_index % preview_interval == 0 or step_data["current"] >= total_steps)
+                )
+                if show_preview:
                     try:
                         import torch
                         with torch.no_grad():

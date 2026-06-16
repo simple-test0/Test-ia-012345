@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, ImageIcon, ChevronDown } from 'lucide-react'
+import { Loader2, ImageIcon, ChevronDown, Lock, AlertTriangle } from 'lucide-react'
 import { generateImage, getModels, getJobs } from '../api/image'
+import { useHardwareInfo } from '../hooks/useHardwareInfo'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { WS_BASE } from '../api/client'
 
@@ -9,7 +10,16 @@ import { WS_BASE } from '../api/client'
 interface ImageModel {
   id: string
   name: string
-  compatibility: string // e.g. "stable-diffusion", "sdxl", etc.
+  description: string
+  min_vram_mb: number
+  recommended_steps: number
+  default_cfg: number
+  default_width: number
+  default_height: number
+  tags: string[]
+  family: string
+  gated: boolean
+  compatible: boolean
 }
 
 interface ImageJob {
@@ -37,26 +47,26 @@ interface GenerateParams {
 interface WsStepEvent {
   type: 'step'
   step: number
-  total_steps: number
-  preview?: string // base64
+  total: number
+  preview?: string | null // base64
 }
 
 interface WsCompletedEvent {
   type: 'completed'
-  images: string[] // base64
+  images_b64: (string | null)[] // base64
 }
 
-interface WsQueueEvent {
-  type: 'queued'
-  position: number
+interface WsErrorEvent {
+  type: 'error'
+  message: string
 }
 
-type WsEvent = WsStepEvent | WsCompletedEvent | WsQueueEvent
+type WsEvent = WsStepEvent | WsCompletedEvent | WsErrorEvent
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const SAMPLERS = ['DPM++ 2M', 'Euler', 'Euler a', 'DDIM', 'LMS']
-const PIXEL_SIZES = [512, 768, 1024]
+const ALL_PIXEL_SIZES = [256, 384, 512, 768, 1024, 1536, 2048]
 const NUM_IMAGES_OPTIONS = [1, 2, 3, 4]
 
 const STATUS_COLORS: Record<ImageJob['status'], string> = {
@@ -85,10 +95,10 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
       const evt = raw as WsEvent
       if (evt.type === 'step') {
         setStep(evt.step)
-        setTotalSteps(evt.total_steps)
+        setTotalSteps(evt.total)
         if (evt.preview) setPreview(evt.preview)
       } else if (evt.type === 'completed') {
-        onCompletedRef.current(evt.images)
+        onCompletedRef.current((evt.images_b64 || []).filter((x): x is string => Boolean(x)))
       }
     },
   })
@@ -199,24 +209,46 @@ export default function ImageGenerationPage() {
   // Active job WS (for queue status on the newly submitted job)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
 
+  // Hardware-aware caps (so small configs aren't offered resolutions that OOM).
+  const { recommendations } = useHardwareInfo(10000)
+  const maxRes = (() => {
+    const ig = recommendations?.image_gen as Record<string, unknown> | undefined
+    const mr = ig?.max_resolution as number[] | undefined
+    return mr && mr.length === 2 ? Math.max(mr[0], mr[1]) : 1024
+  })()
+  const pixelSizes = ALL_PIXEL_SIZES.filter((s) => s <= maxRes)
+
   useWebSocket(activeJobId ? `${WS_BASE}/ws/image/${activeJobId}` : null, {
     onMessage: (raw) => {
       const evt = raw as WsEvent
-      if (evt.type === 'queued') {
-        setQueuePosition(evt.position)
-      } else if (evt.type === 'completed') {
+      if (evt.type === 'completed' || evt.type === 'error') {
         setQueuePosition(null)
         setActiveJobId(null)
+        if (evt.type === 'error') setError(evt.message || 'Generation failed')
       }
     },
   })
 
-  // Fetch models
+  // Apply a model's recommended defaults (steps / CFG / resolution).
+  const applyModelDefaults = (m: ImageModel) => {
+    setSteps(m.recommended_steps)
+    setCfgScale(m.default_cfg)
+    setWidth(Math.min(m.default_width, maxRes))
+    setHeight(Math.min(m.default_height, maxRes))
+  }
+
+  // Fetch models — default to the first hardware-compatible one.
   useEffect(() => {
     getModels()
       .then((data: ImageModel[]) => {
-        setModels(data)
-        if (data.length > 0) setSelectedModel(data[0].id)
+        // Compatible models first, then the rest.
+        const sorted = [...data].sort((a, b) => Number(b.compatible) - Number(a.compatible))
+        setModels(sorted)
+        const first = sorted.find((m) => m.compatible) ?? sorted[0]
+        if (first) {
+          setSelectedModel(first.id)
+          applyModelDefaults(first)
+        }
       })
       .catch(() => setError('Failed to load models'))
   }, [])
@@ -258,8 +290,10 @@ export default function ImageGenerationPage() {
       }
       setJobs((prev) => [newJob, ...prev])
       setActiveJobId(result.job_id)
-    } catch (e) {
-      setError('Generation failed. Please try again.')
+      if (typeof result.queue_size === 'number') setQueuePosition(result.queue_size)
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail || 'Generation failed. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -309,12 +343,16 @@ export default function ImageGenerationPage() {
               className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-3 pr-8
                 text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
               value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
+              onChange={(e) => {
+                setSelectedModel(e.target.value)
+                const m = models.find((x) => x.id === e.target.value)
+                if (m) applyModelDefaults(m)
+              }}
             >
               {models.length === 0 && <option value="">No models found</option>}
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name}
+                  {m.name}{m.compatible ? '' : ' — needs more VRAM'}{m.gated ? ' 🔒' : ''}
                 </option>
               ))}
             </select>
@@ -322,12 +360,34 @@ export default function ImageGenerationPage() {
           </div>
           {models.length > 0 && selectedModel && (() => {
             const m = models.find((x) => x.id === selectedModel)
-            return m ? (
-              <span className="self-start rounded-full bg-purple-500/20 border border-purple-500/40
-                px-2 py-0.5 text-[10px] text-purple-300 font-medium">
-                {m.compatibility}
-              </span>
-            ) : null
+            if (!m) return null
+            return (
+              <div className="flex flex-col gap-1.5">
+                <p className="text-[10px] text-gray-500 leading-snug">{m.description}</p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-full bg-gray-800 border border-gray-700 px-2 py-0.5 text-[10px] text-gray-300 font-mono">
+                    {m.family || 'model'}
+                  </span>
+                  <span className="rounded-full bg-gray-800 border border-gray-700 px-2 py-0.5 text-[10px] text-gray-300">
+                    {m.min_vram_mb > 0 ? `≥ ${(m.min_vram_mb / 1024).toFixed(1)} GB` : 'CPU OK'}
+                  </span>
+                  {m.compatible ? (
+                    <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] text-emerald-300 font-medium">
+                      Compatible
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[10px] text-amber-300 font-medium">
+                      <AlertTriangle className="h-2.5 w-2.5" /> May be slow / OOM
+                    </span>
+                  )}
+                  {m.gated && (
+                    <span className="flex items-center gap-1 rounded-full bg-purple-500/20 border border-purple-500/40 px-2 py-0.5 text-[10px] text-purple-300 font-medium">
+                      <Lock className="h-2.5 w-2.5" /> Gated (HF token)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
           })()}
         </div>
 
@@ -386,7 +446,7 @@ export default function ImageGenerationPage() {
                 value={width}
                 onChange={(e) => setWidth(Number(e.target.value))}
               >
-                {PIXEL_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
+                {pixelSizes.map((s) => <option key={s} value={s}>{s}px</option>)}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2 top-3 h-3.5 w-3.5 text-gray-500" />
             </div>
@@ -400,7 +460,7 @@ export default function ImageGenerationPage() {
                 value={height}
                 onChange={(e) => setHeight(Number(e.target.value))}
               >
-                {PIXEL_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
+                {pixelSizes.map((s) => <option key={s} value={s}>{s}px</option>)}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2 top-3 h-3.5 w-3.5 text-gray-500" />
             </div>

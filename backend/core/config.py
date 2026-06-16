@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     device_preference: str = ""
     # Opt-in torch.compile for image pipelines (first run is slow to warm up).
     enable_torch_compile: bool = False
+    # Live latent previews are decoded through the VAE on every step — cheap on a
+    # big GPU but they can dominate runtime on small/CPU setups. Disabled
+    # automatically on CPU and throttled elsewhere.
+    enable_live_preview: bool = True
 
     # Image generation
     max_queue_size: int = 50
