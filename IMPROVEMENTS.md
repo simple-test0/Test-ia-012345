@@ -77,7 +77,27 @@ la sélection du device :
     (≈8 aperçus/run) ailleurs — évite que la preview domine le temps de calcul.
   - `sd15` toujours disponible (min VRAM 0) ; offload CPU/séquentiel automatique.
 
-## 6. Pistes restantes (suggestions)
+## 6. Labs — du « zéro » au « renforcement » (GPU grand public 6-24 Go)
+
+- **Transfer learning** (nouvelle architecture `pretrained`) : backbones ImageNet
+  torchvision (MobileNetV3, EfficientNetV2-S, ConvNeXt-Tiny, ResNet-50, ViT-B/16)
+  avec tête reconstruite et **freeze backbone** (entraînement tête seule) — la voie
+  la plus rapide vers de bons résultats sur petite carte. Marquée « ★ recommended ».
+- **Renforcement / fine-tuning** : bouton **Reinforce** sur tout run terminé →
+  `POST /runs/{id}/finetune` crée un run **réinitialisé depuis le meilleur
+  checkpoint** (LR réduit ×10, 5 epochs par défaut, dataset modifiable). Le trainer
+  supporte `init_from` (warm-start, `strict=False`).
+- **Techniques récentes accessibles depuis l'UI** : label smoothing, early stopping
+  (patience), `torch.compile` (CUDA/XPU). Mixed precision bf16/fp16 device-aware.
+- **Auto-tune pour mon GPU** : bouton qui pré-remplit batch size / grad-accum /
+  precision / torch.compile depuis les recommandations matérielles.
+- **Compatibilité visible** : chaque architecture indique son VRAM mini vs la carte
+  détectée (badge ambre si ça dépasse), choix du backbone via menu (`select`).
+- **Anti-« capricieux »** : message clair et actionnable en cas d'**OOM GPU**
+  (réduire batch / augmenter grad-accum / baisser la résolution / activer fp16),
+  cache mémoire vidé automatiquement.
+
+## 7. Pistes restantes (suggestions)
 
 - **Multi-GPU réel** : sharding / `device_map="balanced"` (accelerate) au lieu de
   n'utiliser que le GPU primaire ; agréger la VRAM pour les gros modèles.

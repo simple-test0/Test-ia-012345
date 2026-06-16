@@ -2,24 +2,26 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChevronDown, Loader2, Upload, Download, Trash2, Play, Pause,
   Square, FlaskConical, Database, Cpu, BarChart2, CheckCircle2,
-  XCircle, Clock, RefreshCw,
+  XCircle, Clock, RefreshCw, Sparkles, Wand2,
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import {
   getArchitectures, getDatasets, deleteDataset, downloadHFDataset, uploadDataset,
-  getRuns, createRun, pauseRun, resumeRun, stopRun, exportRun,
+  getRuns, createRun, pauseRun, resumeRun, stopRun, exportRun, finetuneRun,
 } from '../api/labs'
+import { useHardwareInfo } from '../hooks/useHardwareInfo'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { WS_BASE } from '../api/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ParamSchema {
-  type: 'integer' | 'float' | 'boolean'
+  type: 'integer' | 'float' | 'boolean' | 'select'
   min?: number
   max?: number
+  options?: string[]
   label: string
 }
 
@@ -87,6 +89,9 @@ interface TrainingConfig {
   gradient_clip_norm: number
   gradient_accumulation_steps: number
   use_mixed_precision: string
+  label_smoothing: number
+  early_stopping_patience: number
+  torch_compile: boolean
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -121,6 +126,9 @@ const DEFAULT_TRAINING: TrainingConfig = {
   gradient_clip_norm: 1.0,
   gradient_accumulation_steps: 1,
   use_mixed_precision: 'fp16',
+  label_smoothing: 0.0,
+  early_stopping_patience: 0,
+  torch_compile: false,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -168,9 +176,10 @@ function MetricsChart({ data }: { data: EpochMetric[] }) {
 interface ActiveRunCardProps {
   run: TrainingRun
   onUpdated: (id: string, patch: Partial<TrainingRun>) => void
+  onReinforce: (run: TrainingRun) => void
 }
 
-function ActiveRunCard({ run, onUpdated }: ActiveRunCardProps) {
+function ActiveRunCard({ run, onUpdated, onReinforce }: ActiveRunCardProps) {
   const [liveMetrics, setLiveMetrics] = useState<EpochMetric[]>(run.metrics_history ?? [])
   const [currentEpoch, setCurrentEpoch] = useState(run.current_epoch ?? 0)
   const [totalEpochs, setTotalEpochs] = useState(run.total_epochs ?? (run.training_config?.epochs as number) ?? 10)
@@ -298,7 +307,15 @@ function ActiveRunCard({ run, onUpdated }: ActiveRunCardProps) {
       {liveMetrics.length > 0 && <MetricsChart data={liveMetrics} />}
 
       {run.status === 'completed' && (
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => onReinforce(run)}
+            className="flex items-center gap-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30
+              px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+            title="Continue training from this model's best checkpoint"
+          >
+            <Sparkles className="h-3 w-3" /> Reinforce
+          </button>
           {['onnx', 'safetensors'].map(fmt => (
             <button
               key={fmt}
@@ -486,35 +503,44 @@ interface ArchTabProps {
   onSelect: (id: string) => void
   archConfig: Record<string, unknown>
   onConfigChange: (key: string, value: unknown) => void
+  vramMb: number
 }
 
-function ArchTab({ architectures, selectedId, onSelect, archConfig, onConfigChange }: ArchTabProps) {
+function ArchTab({ architectures, selectedId, onSelect, archConfig, onConfigChange, vramMb }: ArchTabProps) {
   const selected = architectures.find(a => a.id === selectedId)
+  const fits = (a: Architecture) => vramMb <= 0 || a.min_vram_mb <= vramMb
 
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-2">
-        {architectures.map(arch => (
-          <button
-            key={arch.id}
-            onClick={() => onSelect(arch.id)}
-            className={`rounded-xl border p-2.5 text-left transition-colors ${
-              selectedId === arch.id
-                ? 'border-purple-500 bg-purple-500/10'
-                : 'border-gray-800 bg-gray-900 hover:border-gray-700'
-            }`}
-          >
-            <p className="text-xs font-semibold text-gray-200 leading-snug">{arch.name}</p>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {arch.tags.map(t => (
-                <span key={t} className="rounded-full bg-gray-800 px-1.5 py-0.5 text-[9px] text-gray-400">{t}</span>
-              ))}
-            </div>
-            {arch.min_vram_mb > 0 && (
-              <p className="mt-1 text-[9px] text-gray-600">Min VRAM: {arch.min_vram_mb} MB</p>
-            )}
-          </button>
-        ))}
+        {architectures.map(arch => {
+          const compatible = fits(arch)
+          return (
+            <button
+              key={arch.id}
+              onClick={() => onSelect(arch.id)}
+              className={`relative rounded-xl border p-2.5 text-left transition-colors ${
+                selectedId === arch.id
+                  ? 'border-purple-500 bg-purple-500/10'
+                  : 'border-gray-800 bg-gray-900 hover:border-gray-700'
+              } ${compatible ? '' : 'opacity-70'}`}
+            >
+              <p className="text-xs font-semibold text-gray-200 leading-snug">{arch.name}</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {arch.tags.includes('recommended') && (
+                  <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.5 text-[9px] text-emerald-300">★ recommended</span>
+                )}
+                {arch.tags.filter(t => t !== 'recommended').map(t => (
+                  <span key={t} className="rounded-full bg-gray-800 px-1.5 py-0.5 text-[9px] text-gray-400">{t}</span>
+                ))}
+              </div>
+              <p className={`mt-1 text-[9px] ${compatible ? 'text-gray-600' : 'text-amber-400'}`}>
+                {arch.min_vram_mb > 0 ? `Min VRAM: ${(arch.min_vram_mb / 1024).toFixed(1)} GB` : 'Runs on CPU'}
+                {compatible ? '' : ' · exceeds detected VRAM'}
+              </p>
+            </button>
+          )
+        })}
       </div>
 
       {selected && (
@@ -535,6 +561,12 @@ function ArchTab({ architectures, selectedId, onSelect, archConfig, onConfigChan
                     </button>
                     <span className="text-xs text-gray-400">{archConfig[key] ? 'on' : 'off'}</span>
                   </div>
+                ) : schema.type === 'select' ? (
+                  <SelectField
+                    value={String(archConfig[key] ?? schema.options?.[0] ?? '')}
+                    onChange={v => onConfigChange(key, v)}
+                    options={schema.options ?? []}
+                  />
                 ) : (
                   <input
                     type="number"
@@ -569,17 +601,29 @@ interface TrainingTabProps {
   onStart: () => void
   starting: boolean
   selectedArch: string
+  onAutoTune: () => void
+  autoTuneHint?: string
 }
 
 function TrainingTab({
   datasets, selectedDatasetId, onDatasetSelect,
   config, onConfigChange, runName, onRunNameChange,
-  onStart, starting, selectedArch,
+  onStart, starting, selectedArch, onAutoTune, autoTuneHint,
 }: TrainingTabProps) {
   const readyDatasets = datasets.filter(d => d.status === 'ready')
 
   return (
     <div className="flex flex-col gap-3">
+      {autoTuneHint && (
+        <button
+          onClick={onAutoTune}
+          className="flex items-center justify-center gap-1.5 rounded-xl bg-blue-500/10 border border-blue-500/30
+            px-3 py-2 text-xs font-medium text-blue-300 hover:bg-blue-500/20 transition-colors"
+        >
+          <Wand2 className="h-3.5 w-3.5" /> Auto-tune for my GPU ({autoTuneHint})
+        </button>
+      )}
+
       <div className="flex flex-col gap-1">
         <label className="text-xs font-medium text-gray-400">Run name</label>
         <input
@@ -617,6 +661,20 @@ function TrainingTab({
           onChange={v => onConfigChange('gradient_clip_norm', v)} isFloat />
         <NumField label="Gradient accumulation steps" value={config.gradient_accumulation_steps} min={1} max={64} step={1}
           onChange={v => onConfigChange('gradient_accumulation_steps', v)} />
+        <NumField label="Label smoothing" value={config.label_smoothing} min={0} max={0.3} step={0.01}
+          onChange={v => onConfigChange('label_smoothing', v)} isFloat />
+        <NumField label="Early stopping patience (0 = off)" value={config.early_stopping_patience} min={0} max={50} step={1}
+          onChange={v => onConfigChange('early_stopping_patience', v)} />
+
+        <div className="flex items-center justify-between gap-2">
+          <label className="text-[10px] text-gray-500 shrink-0">torch.compile (faster, CUDA/XPU)</label>
+          <button
+            onClick={() => onConfigChange('torch_compile', !config.torch_compile)}
+            className={`w-8 h-4 rounded-full transition-colors ${config.torch_compile ? 'bg-purple-500' : 'bg-gray-700'}`}
+          >
+            <div className={`h-3 w-3 rounded-full bg-white mx-0.5 transition-transform ${config.torch_compile ? 'translate-x-4' : ''}`} />
+          </button>
+        </div>
 
         <div className="flex flex-col gap-0.5">
           <label className="text-[10px] text-gray-500">Optimizer</label>
@@ -693,7 +751,7 @@ function NumField({
 
 // ─── Run History Card ─────────────────────────────────────────────────────────
 
-function RunHistoryCard({ run }: { run: TrainingRun }) {
+function RunHistoryCard({ run, onReinforce }: { run: TrainingRun; onReinforce: (run: TrainingRun) => void }) {
   const [expanded, setExpanded] = useState(false)
   const [exporting, setExporting] = useState(false)
 
@@ -757,7 +815,15 @@ function RunHistoryCard({ run }: { run: TrainingRun }) {
             </p>
           )}
           {run.status === 'completed' && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => onReinforce(run)}
+                className="flex items-center gap-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30
+                  px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                title="Continue training from this model's best checkpoint"
+              >
+                <Sparkles className="h-3 w-3" /> Reinforce
+              </button>
               {['onnx', 'safetensors'].map(fmt => (
                 <button
                   key={fmt}
@@ -797,6 +863,17 @@ export default function LabsPage() {
   const [runName, setRunName] = useState('')
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Hardware-aware tuning.
+  const { hardware, recommendations } = useHardwareInfo(15000)
+  const vramMb = (() => {
+    const gpus = (hardware?.gpus as Array<Record<string, unknown>>) || []
+    return (gpus[0]?.vram_total_mb as number) ?? 0
+  })()
+  const trainingRec = recommendations?.training as Record<string, unknown> | undefined
+  const autoTuneHint = trainingRec
+    ? `bs ${trainingRec.recommended_batch_size}, ${trainingRec.use_mixed_precision}`
+    : undefined
 
   const fetchDatasets = useCallback(() => {
     getDatasets().then(setDatasets).catch(() => {})
@@ -869,8 +946,40 @@ export default function LabsPage() {
     }
   }
 
+  const handleAutoTune = () => {
+    if (!trainingRec) return
+    setTrainingConfig(prev => ({
+      ...prev,
+      batch_size: (trainingRec.recommended_batch_size as number) ?? prev.batch_size,
+      gradient_accumulation_steps: (trainingRec.gradient_accumulation_steps as number) ?? prev.gradient_accumulation_steps,
+      use_mixed_precision: (trainingRec.use_mixed_precision as string) ?? prev.use_mixed_precision,
+      torch_compile: Boolean(trainingRec.enable_torch_compile),
+    }))
+  }
+
   const handleRunUpdated = useCallback((id: string, patch: Partial<TrainingRun>) => {
     setRuns(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
+  }, [])
+
+  const handleReinforce = useCallback(async (run: TrainingRun) => {
+    try {
+      const result = await finetuneRun(run.id, {})
+      const child: TrainingRun = {
+        id: result.id,
+        name: `${run.name} · reinforce`,
+        status: 'running',
+        architecture: run.architecture,
+        arch_config: run.arch_config,
+        training_config: run.training_config,
+        total_epochs: 5,
+        current_epoch: 0,
+        created_at: new Date().toISOString(),
+        metrics_history: [],
+      }
+      setRuns(prev => [child, ...prev])
+    } catch {
+      setError('Failed to start reinforcement run')
+    }
   }, [])
 
   const activeRuns = runs.filter(r => r.status === 'running' || r.status === 'paused' || r.status === 'pending')
@@ -919,6 +1028,7 @@ export default function LabsPage() {
               onSelect={handleArchSelect}
               archConfig={archConfig}
               onConfigChange={handleArchConfigChange}
+              vramMb={vramMb}
             />
           )}
 
@@ -940,6 +1050,8 @@ export default function LabsPage() {
                 onStart={handleStartTraining}
                 starting={starting}
                 selectedArch={selectedArch}
+                onAutoTune={handleAutoTune}
+                autoTuneHint={autoTuneHint}
               />
             </>
           )}
@@ -956,7 +1068,7 @@ export default function LabsPage() {
               <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
             </div>
             {activeRuns.map(run => (
-              <ActiveRunCard key={run.id} run={run} onUpdated={handleRunUpdated} />
+              <ActiveRunCard key={run.id} run={run} onUpdated={handleRunUpdated} onReinforce={handleReinforce} />
             ))}
           </section>
         )}
@@ -981,7 +1093,7 @@ export default function LabsPage() {
           ) : pastRuns.length === 0 ? (
             <p className="text-xs text-gray-600 py-2">No completed runs yet</p>
           ) : (
-            pastRuns.map(run => <RunHistoryCard key={run.id} run={run} />)
+            pastRuns.map(run => <RunHistoryCard key={run.id} run={run} onReinforce={handleReinforce} />)
           )}
         </section>
       </main>

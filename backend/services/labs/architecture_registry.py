@@ -5,6 +5,7 @@ from services.labs.architectures.cnn import build_cnn
 from services.labs.architectures.rnn import build_rnn, build_lstm, build_gru
 from services.labs.architectures.transformer import build_transformer
 from services.labs.architectures.vit import build_vit
+from services.labs.architectures.pretrained import BACKBONES, build_pretrained
 
 
 @dataclass
@@ -21,6 +22,37 @@ class ArchitectureSpec:
 
 
 ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
+    "pretrained": ArchitectureSpec(
+        id="pretrained",
+        name="Transfer Learning (pretrained backbone)",
+        description=(
+            "Start from an ImageNet-pretrained backbone and retrain only the "
+            "classifier head — the fastest path to strong image-classification "
+            "results on consumer GPUs. Unfreeze the backbone later to fine-tune."
+        ),
+        builder=build_pretrained,
+        default_config={
+            "backbone": "efficientnet_v2_s",
+            "num_classes": 10,
+            "in_channels": 3,
+            "image_size": 224,
+            "pretrained": True,
+            "freeze_backbone": True,
+        },
+        task_types=["classification"],
+        min_vram_mb=2048,
+        param_schema={
+            "backbone": {
+                "type": "select",
+                "options": list(BACKBONES.keys()),
+                "label": "Pretrained backbone",
+            },
+            "num_classes": {"type": "integer", "min": 2, "max": 10000, "label": "Number of classes"},
+            "freeze_backbone": {"type": "boolean", "label": "Freeze backbone (head-only training)"},
+            "pretrained": {"type": "boolean", "label": "Use ImageNet weights"},
+        },
+        tags=["image", "transfer-learning", "recommended", "modern"],
+    ),
     "cnn": ArchitectureSpec(
         id="cnn",
         name="Convolutional Neural Network (CNN)",

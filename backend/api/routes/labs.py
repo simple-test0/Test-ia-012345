@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.websockets.manager import ws_manager
 from core.config import settings
 from core.database import AsyncSessionLocal, get_db
 from hardware.detector import detect_hardware
@@ -19,6 +21,72 @@ from services.labs.trainer import training_manager
 from services.labs.exporter import export_model
 
 router = APIRouter(prefix="/labs", tags=["labs"])
+
+
+def _launch_training(
+    run_id: str,
+    arch_id: str,
+    arch_config: Dict[str, Any],
+    training_config: Dict[str, Any],
+    dataset_path: Optional[str],
+    checkpoint_dir: str,
+) -> None:
+    """Start the training subprocess and pump its metric queue to the WS + DB."""
+    q = training_manager.start(
+        run_id=run_id,
+        arch_id=arch_id,
+        arch_config=arch_config,
+        training_config=training_config,
+        dataset_path=dataset_path,
+        checkpoint_dir=checkpoint_dir,
+    )
+
+    async def _drain_queue():
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                event = await loop.run_in_executor(None, lambda: q.get(timeout=1.0))
+            except Exception:
+                p = training_manager._processes.get(run_id)
+                if p and not p.is_alive():
+                    break
+                continue
+
+            await ws_manager.send(run_id, event)
+
+            etype = event.get("type")
+            if etype == "epoch_metric":
+                async with AsyncSessionLocal() as session:
+                    r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+                    rec = r.scalar_one_or_none()
+                    if rec:
+                        rec.current_epoch = event["epoch"]
+                        rec.status = "running"
+                        history = list(rec.metrics_history or [])
+                        history.append(event)
+                        rec.metrics_history = history
+                        await session.commit()
+            elif etype == "completed":
+                async with AsyncSessionLocal() as session:
+                    r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+                    rec = r.scalar_one_or_none()
+                    if rec:
+                        rec.status = "completed"
+                        rec.completed_at = datetime.utcnow()
+                        rec.best_checkpoint_path = event.get("best_checkpoint")
+                        await session.commit()
+                break
+            elif etype == "error":
+                async with AsyncSessionLocal() as session:
+                    r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+                    rec = r.scalar_one_or_none()
+                    if rec:
+                        rec.status = "failed"
+                        rec.error_message = event.get("message")
+                        await session.commit()
+                break
+
+    asyncio.create_task(_drain_queue())
 
 
 # ── Architectures ─────────────────────────────────────────────────────────────
@@ -189,8 +257,7 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
     db.add(run)
     await db.commit()
 
-    # Start training subprocess
-    q = training_manager.start(
+    _launch_training(
         run_id=run_id,
         arch_id=req.architecture,
         arch_config=req.arch_config,
@@ -199,62 +266,90 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
         checkpoint_dir=checkpoint_dir,
     )
 
-    # Background task to drain subprocess queue → WS
-    import asyncio
-    from api.websockets.manager import ws_manager
-
-    async def _drain_queue():
-        from sqlalchemy import select as sel
-        while True:
-            try:
-                event = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: q.get(timeout=1.0)
-                )
-            except Exception:
-                p = training_manager._processes.get(run_id)
-                if p and not p.is_alive():
-                    break
-                continue
-
-            await ws_manager.send(run_id, event)
-
-            # Persist epoch metrics to DB
-            if event.get("type") == "epoch_metric":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(sel(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.current_epoch = event["epoch"]
-                        rec.status = "running"
-                        history = list(rec.metrics_history or [])
-                        history.append(event)
-                        rec.metrics_history = history
-                        await session.commit()
-
-            elif event.get("type") == "completed":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(sel(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.status = "completed"
-                        rec.completed_at = datetime.utcnow()
-                        rec.best_checkpoint_path = event.get("best_checkpoint")
-                        await session.commit()
-                break
-
-            elif event.get("type") == "error":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(sel(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.status = "failed"
-                        rec.error_message = event.get("message")
-                        await session.commit()
-                break
-
-    asyncio.create_task(_drain_queue())
-
     return {"id": run_id, "status": "running"}
+
+
+class FinetuneRequest(BaseModel):
+    name: Optional[str] = None
+    dataset_id: Optional[str] = None
+    epochs: Optional[int] = None
+    learning_rate: Optional[float] = None
+    freeze_backbone: Optional[bool] = None
+    training_config: Optional[Dict[str, Any]] = None
+
+
+@router.post("/runs/{run_id}/finetune")
+async def finetune_run(run_id: str, req: FinetuneRequest, db: AsyncSession = Depends(get_db)):
+    """Create a new run that continues / reinforces a finished model.
+
+    Warm-starts from the parent's best checkpoint, keeps its architecture, and
+    applies fine-tuning defaults (lower LR, fewer epochs) unless overridden.
+    """
+    result = await db.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+    parent = result.scalar_one_or_none()
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not parent.best_checkpoint_path:
+        raise HTTPException(status_code=400, detail="Parent run has no checkpoint to reinforce")
+
+    # Build the child training config: parent's settings, then fine-tuning
+    # defaults, then explicit overrides.
+    parent_lr = float(parent.training_config.get("learning_rate", 3e-4))
+    tcfg: Dict[str, Any] = dict(parent.training_config or {})
+    tcfg.update(req.training_config or {})
+    tcfg["init_from"] = parent.best_checkpoint_path
+    tcfg["learning_rate"] = req.learning_rate if req.learning_rate is not None else parent_lr * 0.1
+    epochs = req.epochs if req.epochs is not None else 5
+    tcfg["epochs"] = epochs
+
+    arch_config = dict(parent.arch_config or {})
+    if req.freeze_backbone is not None:
+        arch_config["freeze_backbone"] = req.freeze_backbone
+    # We warm-start from the checkpoint, so skip re-downloading ImageNet weights.
+    if parent.architecture == "pretrained":
+        arch_config["pretrained"] = False
+
+    dataset_id = req.dataset_id or parent.dataset_id
+    dataset_path = None
+    if dataset_id:
+        ds_res = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
+        ds = ds_res.scalar_one_or_none()
+        if ds and ds.local_path:
+            dataset_path = ds.local_path
+
+    hw = detect_hardware()
+    child_id = str(uuid.uuid4())
+    checkpoint_dir = str(settings.models_dir / "trained" / child_id / "checkpoints")
+
+    child = TrainingRun(
+        id=child_id,
+        name=req.name or f"{parent.name} · reinforce",
+        status="pending",
+        architecture=parent.architecture,
+        arch_config=arch_config,
+        training_config=tcfg,
+        dataset_id=dataset_id,
+        total_epochs=epochs,
+        hardware_snapshot={
+            "vram_mb": hw.gpus[0].vram_total_mb if hw.gpus else 0,
+            "ram_mb": hw.ram_total_mb,
+            "cpu_cores": hw.cpu.logical_cores if hw.cpu else 0,
+            "reinforced_from": run_id,
+        },
+    )
+    db.add(child)
+    await db.commit()
+
+    _launch_training(
+        run_id=child_id,
+        arch_id=parent.architecture,
+        arch_config=arch_config,
+        training_config=tcfg,
+        dataset_path=dataset_path,
+        checkpoint_dir=checkpoint_dir,
+    )
+
+    return {"id": child_id, "status": "running", "reinforced_from": run_id}
 
 
 @router.post("/runs/{run_id}/pause")

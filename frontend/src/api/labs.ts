@@ -23,3 +23,7 @@ export const resumeRun = (id: string) => api.post(`/labs/runs/${id}/resume`).the
 export const stopRun = (id: string) => api.post(`/labs/runs/${id}/stop`).then(r => r.data)
 export const exportRun = (id: string, format: string) =>
   api.post(`/labs/runs/${id}/export`, { format }).then(r => r.data)
+export const finetuneRun = (
+  id: string,
+  data: { name?: string; dataset_id?: string; epochs?: number; learning_rate?: number; freeze_backbone?: boolean } = {},
+) => api.post(`/labs/runs/${id}/finetune`, data).then(r => r.data)

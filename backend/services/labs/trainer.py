@@ -46,6 +46,31 @@ def _training_process(
         device = torch.device(_pick_training_device(torch))
         model = model.to(device)
 
+        # ── Reinforcement / fine-tuning: warm-start from a previous checkpoint ──
+        init_from = training_config.get("init_from")
+        if init_from and Path(init_from).exists():
+            try:
+                ckpt = torch.load(init_from, map_location=device)
+                state = ckpt.get("model_state", ckpt) if isinstance(ckpt, dict) else ckpt
+                missing, unexpected = model.load_state_dict(state, strict=False)
+                emit({
+                    "type": "info",
+                    "message": (
+                        f"Warm-started from checkpoint "
+                        f"({len(state)} tensors, {len(missing)} new, {len(unexpected)} unused)"
+                    ),
+                })
+            except Exception as exc:
+                emit({"type": "info", "message": f"Could not load init checkpoint: {exc}"})
+
+        # Optional torch.compile (CUDA/XPU only) — speeds up steady-state steps.
+        if training_config.get("torch_compile") and device.type in ("cuda", "xpu"):
+            try:
+                model = torch.compile(model)
+                emit({"type": "info", "message": "torch.compile enabled"})
+            except Exception as exc:
+                emit({"type": "info", "message": f"torch.compile unavailable: {exc}"})
+
         num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         emit({"type": "model_info", "num_params": num_params, "device": str(device)})
 
@@ -118,10 +143,15 @@ def _training_process(
         else:
             scheduler = None
 
-        criterion = nn.CrossEntropyLoss()
+        label_smoothing = float(training_config.get("label_smoothing", 0.0))
+        criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         scaler = torch.amp.GradScaler(device.type, enabled=use_scaler)
         checkpoint_dir_path = Path(checkpoint_dir)
         checkpoint_dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Early stopping (0 disables it) — saves time on consumer hardware.
+        patience = int(training_config.get("early_stopping_patience", 0))
+        epochs_no_improve = 0
 
         best_val_loss = float("inf")
         best_ckpt = None
@@ -213,9 +243,12 @@ def _training_process(
                 "val_loss": val_loss,
             }, ckpt_path)
 
-            if val_loss < best_val_loss:
+            if val_loss < best_val_loss - 1e-4:
                 best_val_loss = val_loss
                 best_ckpt = ckpt_path
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
 
             emit({
                 "type": "epoch_metric",
@@ -228,11 +261,34 @@ def _training_process(
                 "lr": optimizer.param_groups[0]["lr"],
             })
 
+            if patience > 0 and epochs_no_improve >= patience:
+                emit({
+                    "type": "info",
+                    "message": f"Early stopping at epoch {epoch} (no improvement for {patience} epochs)",
+                })
+                break
+
         emit({"type": "completed", "best_checkpoint": best_ckpt})
 
     except Exception as exc:
         import traceback
-        emit({"type": "error", "message": str(exc), "traceback": traceback.format_exc()})
+
+        message = str(exc)
+        if "out of memory" in message.lower():
+            # The single most common consumer-GPU failure — give actionable advice
+            # instead of a raw CUDA stack trace.
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+            message = (
+                "GPU ran out of memory. Try: lower the batch size, increase "
+                "gradient accumulation steps, reduce image size / model size, or "
+                "enable fp16/bf16 mixed precision."
+            )
+        emit({"type": "error", "message": message, "traceback": traceback.format_exc()})
 
 
 def _pick_training_device(torch) -> str:

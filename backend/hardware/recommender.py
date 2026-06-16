@@ -372,9 +372,9 @@ def _recommend_training(budget_mb, cpu_cores, supports_amp, supports_compile,
     else:
         precision = "fp16"
 
-    feasible_archs = ["cnn", "rnn", "lstm"]
+    feasible_archs = ["cnn", "rnn", "lstm", "gru"]
     if budget_mb >= 2048:
-        feasible_archs.append("transformer")
+        feasible_archs += ["pretrained", "transformer"]
     if budget_mb >= 3072:
         feasible_archs.append("vit")
 
