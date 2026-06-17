@@ -1,5 +1,7 @@
 """Training worker that runs in a separate process to avoid GIL contention."""
+import atexit
 import logging
+import math
 import multiprocessing as mp
 import os
 import signal
@@ -75,7 +77,8 @@ def _training_process(
         emit({"type": "model_info", "num_params": num_params, "device": str(device)})
 
         # ── Dataset ──────────────────────────────────────────────────────────
-        num_classes = arch_config.get("num_classes", 10)
+        # Classification trainer: at least 2 classes (guards transformer LM mode).
+        num_classes = max(int(arch_config.get("num_classes", 10) or 10), 2)
         if dataset_path and Path(dataset_path).exists():
             # Attempt to load a HF dataset saved as arrow files
             try:
@@ -97,7 +100,9 @@ def _training_process(
         train_size = len(dataset) - val_size
         train_ds, val_ds = random_split(dataset, [train_size, val_size])
 
-        num_workers = min(training_config.get("num_workers", 2), 4)
+        # Bound workers by the actual core count. The subprocess is non-daemonic
+        # so DataLoader is free to spawn its own worker children.
+        num_workers = min(int(training_config.get("num_workers", 2)), 4, max(os.cpu_count() or 1, 1))
         batch_size = training_config.get("batch_size", 16)
         train_loader = DataLoader(
             train_ds, batch_size=batch_size, shuffle=True,
@@ -137,8 +142,11 @@ def _training_process(
         elif sched_name == "linear":
             scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=epochs)
         elif sched_name == "onecycle":
+            # scheduler.step() fires once per *optimizer* step (i.e. per
+            # accumulation window), so size the cycle accordingly.
+            steps_per_epoch = max(1, math.ceil(len(train_loader) / max(grad_accum, 1)))
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
-                optimizer, max_lr=lr, steps_per_epoch=len(train_loader), epochs=epochs
+                optimizer, max_lr=lr, steps_per_epoch=steps_per_epoch, epochs=epochs
             )
         else:
             scheduler = None
@@ -365,11 +373,14 @@ class TrainingManager:
         # Inject arch_id into config for dummy data detection
         arch_config = {**arch_config, "_arch_id": arch_id}
 
+        # Non-daemonic: a daemonic process may not spawn children, which would
+        # break DataLoader(num_workers>0). Live processes are terminated on
+        # shutdown via shutdown_all().
         p = mp.Process(
             target=_training_process,
             args=(run_id, arch_id, arch_config, training_config, dataset_path,
                   checkpoint_dir, q, stop_ev, pause_ev),
-            daemon=True,
+            daemon=False,
         )
         p.start()
 
@@ -418,5 +429,20 @@ class TrainingManager:
         self._stop_events.pop(run_id, None)
         self._pause_events.pop(run_id, None)
 
+    def shutdown_all(self) -> None:
+        """Terminate any live (non-daemonic) training process on app exit."""
+        for run_id, p in list(self._processes.items()):
+            try:
+                ev = self._stop_events.get(run_id)
+                if ev:
+                    ev.set()
+                if p.is_alive():
+                    p.join(timeout=3)
+                    if p.is_alive():
+                        p.terminate()
+            except Exception:
+                pass
+
 
 training_manager = TrainingManager()
+atexit.register(training_manager.shutdown_all)

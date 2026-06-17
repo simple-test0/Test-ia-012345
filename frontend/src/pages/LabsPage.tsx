@@ -181,6 +181,7 @@ interface ActiveRunCardProps {
 
 function ActiveRunCard({ run, onUpdated, onReinforce }: ActiveRunCardProps) {
   const [liveMetrics, setLiveMetrics] = useState<EpochMetric[]>(run.metrics_history ?? [])
+  const [notes, setNotes] = useState<string[]>([])
   const [currentEpoch, setCurrentEpoch] = useState(run.current_epoch ?? 0)
   const [totalEpochs, setTotalEpochs] = useState(run.total_epochs ?? (run.training_config?.epochs as number) ?? 10)
   const [busy, setBusy] = useState(false)
@@ -204,6 +205,9 @@ function ActiveRunCard({ run, onUpdated, onReinforce }: ActiveRunCardProps) {
         onUpdatedRef.current(run.id, { status: 'failed', error_message: evt.message as string })
       } else if (evt.type === 'status') {
         onUpdatedRef.current(run.id, { status: evt.status as RunStatus })
+      } else if (evt.type === 'info') {
+        const m = evt.message as string
+        if (m) setNotes(prev => [...prev.slice(-4), m])
       }
     },
   })
@@ -302,6 +306,14 @@ function ActiveRunCard({ run, onUpdated, onReinforce }: ActiveRunCardProps) {
             </button>
           </div>
         </>
+      )}
+
+      {notes.length > 0 && (
+        <div className="flex flex-col gap-0.5 rounded-lg bg-gray-800/50 border border-gray-700/50 px-2.5 py-1.5">
+          {notes.map((n, i) => (
+            <p key={i} className="text-[10px] text-gray-400 leading-snug">· {n}</p>
+          ))}
+        </div>
       )}
 
       {liveMetrics.length > 0 && <MetricsChart data={liveMetrics} />}
@@ -876,11 +888,11 @@ export default function LabsPage() {
     : undefined
 
   const fetchDatasets = useCallback(() => {
-    getDatasets().then(setDatasets).catch(() => {})
+    getDatasets().then(setDatasets).catch(() => setError('Failed to load datasets'))
   }, [])
 
   const fetchRuns = useCallback(() => {
-    getRuns().then(setRuns).catch(() => {})
+    getRuns().then(setRuns).catch(() => setError('Failed to load training runs'))
   }, [])
 
   useEffect(() => {
@@ -890,10 +902,17 @@ export default function LabsPage() {
         setSelectedArch(data[0].id)
         setArchConfig({ ...data[0].default_config })
       }
-    }).catch(() => {})
+    }).catch(() => setError('Failed to load architectures'))
     fetchDatasets()
     fetchRuns()
   }, [fetchDatasets, fetchRuns])
+
+  // Poll dataset status while any download/processing is in flight.
+  useEffect(() => {
+    if (!datasets.some(d => d.status === 'downloading')) return
+    const t = setInterval(fetchDatasets, 3000)
+    return () => clearInterval(t)
+  }, [datasets, fetchDatasets])
 
   const handleArchSelect = (id: string) => {
     const arch = architectures.find(a => a.id === id)

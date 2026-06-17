@@ -97,7 +97,30 @@ la sélection du device :
   (réduire batch / augmenter grad-accum / baisser la résolution / activer fp16),
   cache mémoire vidé automatiquement.
 
-## 7. Pistes restantes (suggestions)
+## 7. Corrections d'audit
+
+- **Entraînement débloqué** : sous-processus `daemon=False` (les workers DataLoader
+  peuvent désormais démarrer), `num_workers` borné par les cœurs, terminaison
+  propre des process au shutdown (`shutdown_all` + `atexit`/lifespan).
+- **Transformer** : passe en classification par défaut (`num_classes=4`, min 2) ;
+  `_make_dummy_dataset` garde-fou `max(num_classes, 2)`.
+- **Contrat WS agent** : le planner émet `id` + `tool_name` → les cartes d'outils
+  s'affichent et les résultats se rattachent.
+- **Agent** : la session DB n'est plus tenue ouverte pendant le stream LLM
+  (charge → ferme → run → ré-ouvre pour persister), client Ollama mutualisé,
+  `system_prompt` injecté, `started_at` renseigné.
+- **Upload datasets** : sanitisation du nom (anti path-traversal), écriture en
+  streaming bornée par `MAX_UPLOAD_MB`, gestion d'erreur (status `error`), et
+  persistance dans la requête (les `UploadFile` se ferment après).
+- **Performance** : drain d'entraînement sur thread dédié (libère l'executor),
+  `list_runs` paginé, `OneCycleLR` cohérent avec l'accumulation de gradient.
+- **Compatibilité** : fallback explicite `FluxPipeline`/`StableDiffusion3Pipeline`
+  si `AutoPipeline` ne résout pas la famille.
+- **UI** : pas de reconnexion WS après fermeture propre, nouvelle session à
+  « 0 messages », polling auto du statut dataset, events `info` du trainer
+  affichés, erreurs de chargement remontées.
+
+## 8. Pistes restantes (suggestions)
 
 - **Multi-GPU réel** : sharding / `device_map="balanced"` (accelerate) au lieu de
   n'utiliser que le GPU primaire ; agréger la VRAM pour les gros modèles.

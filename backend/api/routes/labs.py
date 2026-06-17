@@ -1,4 +1,7 @@
 import asyncio
+import logging
+import queue as _queue
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +23,21 @@ from services.labs.architecture_registry import ARCHITECTURE_REGISTRY, get_arch,
 from services.labs.trainer import training_manager
 from services.labs.exporter import export_model
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/labs", tags=["labs"])
+
+
+def _spawn(coro) -> asyncio.Task:
+    """Fire off a background coroutine, logging any unhandled exception."""
+    task = asyncio.create_task(coro)
+
+    def _cb(t: asyncio.Task) -> None:
+        if not t.cancelled() and t.exception() is not None:
+            logger.error("Background task failed: %s", t.exception(), exc_info=t.exception())
+
+    task.add_done_callback(_cb)
+    return task
 
 
 def _launch_training(
@@ -31,7 +48,13 @@ def _launch_training(
     dataset_path: Optional[str],
     checkpoint_dir: str,
 ) -> None:
-    """Start the training subprocess and pump its metric queue to the WS + DB."""
+    """Start the training subprocess and pump its metric queue to the WS + DB.
+
+    A dedicated daemon thread blocks on the (multiprocessing) queue and marshals
+    each event back onto the event loop, so we never tie up a shared executor
+    thread for the whole run.
+    """
+    loop = asyncio.get_running_loop()
     q = training_manager.start(
         run_id=run_id,
         arch_id=arch_id,
@@ -41,52 +64,64 @@ def _launch_training(
         checkpoint_dir=checkpoint_dir,
     )
 
-    async def _drain_queue():
-        loop = asyncio.get_running_loop()
+    async def _handle_event(event: dict) -> bool:
+        """Forward an event to the WS + DB. Returns True when terminal."""
+        await ws_manager.send(run_id, event)
+        etype = event.get("type")
+        if etype == "epoch_metric":
+            async with AsyncSessionLocal() as session:
+                r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+                rec = r.scalar_one_or_none()
+                if rec:
+                    rec.current_epoch = event["epoch"]
+                    rec.status = "running"
+                    if rec.started_at is None:
+                        rec.started_at = datetime.utcnow()
+                    history = list(rec.metrics_history or [])
+                    history.append(event)
+                    rec.metrics_history = history
+                    await session.commit()
+        elif etype == "completed":
+            async with AsyncSessionLocal() as session:
+                r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+                rec = r.scalar_one_or_none()
+                if rec:
+                    rec.status = "completed"
+                    rec.completed_at = datetime.utcnow()
+                    rec.best_checkpoint_path = event.get("best_checkpoint")
+                    await session.commit()
+            return True
+        elif etype == "error":
+            async with AsyncSessionLocal() as session:
+                r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+                rec = r.scalar_one_or_none()
+                if rec:
+                    rec.status = "failed"
+                    rec.error_message = event.get("message")
+                    await session.commit()
+            return True
+        return False
+
+    def _pump() -> None:
         while True:
             try:
-                event = await loop.run_in_executor(None, lambda: q.get(timeout=1.0))
-            except Exception:
+                event = q.get(timeout=1.0)
+            except _queue.Empty:
                 p = training_manager._processes.get(run_id)
                 if p and not p.is_alive():
                     break
                 continue
-
-            await ws_manager.send(run_id, event)
-
-            etype = event.get("type")
-            if etype == "epoch_metric":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.current_epoch = event["epoch"]
-                        rec.status = "running"
-                        history = list(rec.metrics_history or [])
-                        history.append(event)
-                        rec.metrics_history = history
-                        await session.commit()
-            elif etype == "completed":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.status = "completed"
-                        rec.completed_at = datetime.utcnow()
-                        rec.best_checkpoint_path = event.get("best_checkpoint")
-                        await session.commit()
-                break
-            elif etype == "error":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.status = "failed"
-                        rec.error_message = event.get("message")
-                        await session.commit()
+            except Exception:
                 break
 
-    asyncio.create_task(_drain_queue())
+            fut = asyncio.run_coroutine_threadsafe(_handle_event(event), loop)
+            try:
+                if fut.result(timeout=30):
+                    break
+            except Exception:
+                logger.exception("Failed to handle training event for run %s", run_id)
+
+    threading.Thread(target=_pump, name=f"train-drain-{run_id}", daemon=True).start()
 
 
 # ── Architectures ─────────────────────────────────────────────────────────────
@@ -135,7 +170,6 @@ class HFDatasetRequest(BaseModel):
 
 @router.post("/datasets/huggingface")
 async def download_hf_dataset(req: HFDatasetRequest, db: AsyncSession = Depends(get_db)):
-    import asyncio
     from services.labs.dataset_manager import download_huggingface_dataset
 
     ds_id = str(uuid.uuid4())
@@ -150,9 +184,7 @@ async def download_hf_dataset(req: HFDatasetRequest, db: AsyncSession = Depends(
     db.add(record)
     await db.commit()
 
-    asyncio.create_task(
-        download_huggingface_dataset(ds_id, req.hf_id, req.task_type, AsyncSessionLocal)
-    )
+    _spawn(download_huggingface_dataset(ds_id, req.hf_id, req.task_type, AsyncSessionLocal))
     return {"id": ds_id, "status": "downloading"}
 
 
@@ -163,7 +195,6 @@ async def upload_dataset(
     files: List[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    import asyncio
     from services.labs.dataset_manager import process_upload
 
     ds_id = str(uuid.uuid4())
@@ -177,8 +208,13 @@ async def upload_dataset(
     db.add(record)
     await db.commit()
 
-    asyncio.create_task(process_upload(ds_id, files, task_type, AsyncSessionLocal))
-    return {"id": ds_id, "status": "processing"}
+    # Persist while the UploadFile handles are still open (they close once the
+    # request returns), then report the terminal status set by process_upload.
+    await process_upload(ds_id, files, task_type, AsyncSessionLocal)
+
+    result = await db.execute(select(Dataset).where(Dataset.id == ds_id))
+    rec = result.scalar_one_or_none()
+    return {"id": ds_id, "status": rec.status if rec else "error"}
 
 
 @router.delete("/datasets/{dataset_id}")
@@ -203,8 +239,11 @@ class CreateRunRequest(BaseModel):
 
 
 @router.get("/runs")
-async def list_runs(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(TrainingRun).order_by(TrainingRun.created_at.desc()))
+async def list_runs(limit: int = 50, offset: int = 0, db: AsyncSession = Depends(get_db)):
+    limit = max(1, min(limit, 200))
+    result = await db.execute(
+        select(TrainingRun).order_by(TrainingRun.created_at.desc()).limit(limit).offset(offset)
+    )
     runs = result.scalars().all()
     return [_run_dict(r) for r in runs]
 

@@ -305,7 +305,7 @@ export default function AgentPage() {
         model_id: selectedModel,
         system_prompt: systemPrompt,
       })
-      setSessions((prev) => [session, ...prev])
+      setSessions((prev) => [{ ...session, message_count: 0 }, ...prev])
       setSelectedSessionId(session.id)
       setMessages([])
     } catch {

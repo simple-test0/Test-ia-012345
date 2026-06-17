@@ -21,8 +21,10 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
     wsRef.current = ws
 
     ws.onopen = () => setConnected(true)
-    ws.onclose = () => {
+    ws.onclose = (evt) => {
       setConnected(false)
+      // Don't reconnect after a clean/normal closure (e.g. server done).
+      if (evt.code === 1000) return
       reconnectTimeout.current = setTimeout(connect, 2000)
     }
     ws.onerror = () => ws.close()

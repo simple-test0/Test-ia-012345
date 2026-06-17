@@ -67,6 +67,10 @@ async def lifespan(app: FastAPI):
 
     from services.agent.ollama_client import ollama_client
     await ollama_client.aclose()
+
+    # Terminate any live training subprocesses (non-daemonic).
+    from services.labs.trainer import training_manager
+    training_manager.shutdown_all()
     logger.info("AI Studio backend stopped")
 
 
