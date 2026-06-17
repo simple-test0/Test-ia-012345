@@ -8,7 +8,8 @@ from typing import Optional
 from api.websockets.manager import ws_manager
 from core.config import settings
 
-from services.image_gen.pipeline_manager import image_to_base64, pipeline_manager
+from services.image_gen.model_registry import get_model
+from services.image_gen.pipeline_manager import apply_sampler, image_to_base64, pipeline_manager
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ class GenerationWorker:
 
         try:
             pipe = await pipeline_manager.get_pipeline(model_id, repo_id)
+            spec = get_model(model_id)
+            apply_sampler(pipe, job.get("sampler", ""), spec.family if spec else "")
             loop = self._loop
             step_data = {"current": 0}
 

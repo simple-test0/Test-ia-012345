@@ -109,6 +109,7 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "steps": req.steps,
         "cfg_scale": req.cfg_scale,
         "seed": seed,
+        "sampler": req.sampler,
         "num_images": req.num_images,
     }
     await generation_queue.put(queue_job)

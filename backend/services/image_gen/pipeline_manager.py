@@ -178,6 +178,41 @@ class PipelineManager:
             empty_accelerator_cache()
 
 
+# UI sampler name → diffusers scheduler class. Applied to SD/SDXL pipelines only;
+# flow-matching families (FLUX / SD3) keep their native scheduler.
+_SAMPLER_SCHEDULERS = {
+    "DPM++ 2M": "DPMSolverMultistepScheduler",
+    "Euler": "EulerDiscreteScheduler",
+    "Euler a": "EulerAncestralDiscreteScheduler",
+    "DDIM": "DDIMScheduler",
+    "LMS": "LMSDiscreteScheduler",
+}
+
+_FLOW_MATCHING_FAMILIES = {"flux", "sd3"}
+
+
+def apply_sampler(pipe, sampler: str, family: str = "") -> None:
+    """Swap a pipeline's scheduler to match the requested sampler.
+
+    No-op for flow-matching pipelines (FLUX / SD3), for unknown samplers, or if
+    the scheduler can't be rebuilt — the pipeline keeps its current scheduler.
+    """
+    if not sampler or family in _FLOW_MATCHING_FAMILIES:
+        return
+    class_name = _SAMPLER_SCHEDULERS.get(sampler)
+    if not class_name:
+        return
+    try:
+        import diffusers
+
+        sched_cls = getattr(diffusers, class_name, None)
+        if sched_cls is not None:
+            pipe.scheduler = sched_cls.from_config(pipe.scheduler.config)
+            logger.info("Sampler set to %s (%s)", sampler, class_name)
+    except Exception:
+        logger.debug("Could not apply sampler %s", sampler, exc_info=True)
+
+
 pipeline_manager = PipelineManager()
 
 
