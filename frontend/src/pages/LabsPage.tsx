@@ -11,7 +11,7 @@ import {
   stopRun,
 } from '../api/labs'
 import { useWebSocket } from '../hooks/useWebSocket'
-import { WS_BASE } from '../api/client'
+import { wsUrl } from '../api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,25 +54,37 @@ const STATUS_COLORS: Record<string, string> = {
 
 function RunMetrics({ runId }: { runId: string }) {
   const [latest, setLatest] = useState<Record<string, number> | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
 
-  useWebSocket(`${WS_BASE}/ws/training/${runId}`, {
+  useWebSocket(wsUrl(`/ws/training/${runId}`), {
     onMessage: (raw) => {
-      const evt = raw as { type: string } & Record<string, number>
+      const evt = raw as { type: string; message?: string } & Record<string, number>
       if (evt.type === 'epoch_metric' || evt.type === 'batch_metric') {
         setLatest(evt)
+      } else if (evt.type === 'warning' && evt.message) {
+        setWarning(evt.message)
       }
     },
   })
 
-  if (!latest) return <p className="text-[11px] text-gray-500">En attente de métriques…</p>
-
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400">
-      {latest.epoch !== undefined && <span>epoch {latest.epoch}</span>}
-      {latest.train_loss !== undefined && <span>train_loss {latest.train_loss}</span>}
-      {latest.val_loss !== undefined && <span>val_loss {latest.val_loss}</span>}
-      {latest.val_acc !== undefined && <span>val_acc {latest.val_acc}</span>}
-      {latest.loss !== undefined && <span>loss {latest.loss}</span>}
+    <div className="flex flex-col gap-1">
+      {warning && (
+        <p className="rounded bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-[10px] text-amber-300">
+          ⚠ {warning}
+        </p>
+      )}
+      {latest ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400">
+          {latest.epoch !== undefined && <span>epoch {latest.epoch}</span>}
+          {latest.train_loss !== undefined && <span>train_loss {latest.train_loss}</span>}
+          {latest.val_loss !== undefined && <span>val_loss {latest.val_loss}</span>}
+          {latest.val_acc !== undefined && <span>val_acc {latest.val_acc}</span>}
+          {latest.loss !== undefined && <span>loss {latest.loss}</span>}
+        </div>
+      ) : (
+        <p className="text-[11px] text-gray-500">En attente de métriques…</p>
+      )}
     </div>
   )
 }

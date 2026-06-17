@@ -9,7 +9,7 @@ from typing import Optional
 
 from core.config import settings
 from api.websockets.manager import ws_manager
-from services.image_gen.pipeline_manager import pipeline_manager, image_to_base64
+from services.image_gen.pipeline_manager import apply_sampler, pipeline_manager, image_to_base64
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,8 @@ class GenerationWorker:
 
         try:
             pipe = await pipeline_manager.get_pipeline(model_id, repo_id)
+            if job.get("sampler"):
+                apply_sampler(pipe, job["sampler"])
             loop = self._loop
             step_data = {"current": 0}
 
@@ -80,8 +82,8 @@ class GenerationWorker:
                             img = Image.fromarray((decoded[0] * 255).astype(np.uint8))
                             img.thumbnail((256, 256))
                             preview_b64 = image_to_base64(img)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug(f"Step preview decode failed: {exc}")
 
                 asyncio.run_coroutine_threadsafe(
                     ws_manager.send(job_id, {

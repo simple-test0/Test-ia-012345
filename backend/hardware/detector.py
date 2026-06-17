@@ -1,8 +1,11 @@
+import logging
 import platform
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import psutil
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,8 +82,8 @@ def detect_hardware() -> HardwareInfo:
                     if i < len(gputil_gpus):
                         driver_ver = gputil_gpus[i].driver
                         util_pct = gputil_gpus[i].load * 100
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"GPUtil unavailable: {exc}")
 
                 info.gpus.append(
                     GPUInfo(

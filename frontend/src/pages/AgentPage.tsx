@@ -7,7 +7,7 @@ import {
   createSession,
 } from '../api/agent'
 import { useWebSocket } from '../hooks/useWebSocket'
-import { WS_BASE } from '../api/client'
+import { wsUrl } from '../api/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -217,11 +217,11 @@ export default function AgentPage() {
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
 
-  const wsUrl = selectedSessionId
-    ? `${WS_BASE}/ws/agent/${selectedSessionId}`
+  const agentWsUrl = selectedSessionId
+    ? wsUrl(`/ws/agent/${selectedSessionId}`)
     : null
 
-  const { send } = useWebSocket(wsUrl, {
+  const { send } = useWebSocket(agentWsUrl, {
     onMessage: (raw) => {
       const evt = raw as WsEvent
 

@@ -44,6 +44,21 @@ def tools_as_json_schema() -> List[dict]:
     ]
 
 
+def tools_as_ollama_schema() -> List[dict]:
+    """Tools in Ollama's native function-calling format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.parameters,
+            },
+        }
+        for t in _registry.values()
+    ]
+
+
 async def execute_tool(name: str, args: dict) -> Any:
     tool = get_tool(name)
     if not tool:

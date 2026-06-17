@@ -51,6 +51,8 @@ def _training_process(
 
         # ── Dataset ──────────────────────────────────────────────────────────
         num_classes = arch_config.get("num_classes", 10)
+        using_dummy = False
+        dummy_reason = ""
         if dataset_path and Path(dataset_path).exists():
             # Attempt to load a HF dataset saved as arrow files
             try:
@@ -62,10 +64,21 @@ def _training_process(
                 xs = torch.FloatTensor(np.array(hf_ds["train"]["pixel_values"]))
                 ys = torch.LongTensor(np.array(hf_ds["train"]["label"]))
                 dataset = TensorDataset(xs, ys)
-            except Exception:
+            except Exception as exc:
+                using_dummy = True
+                dummy_reason = f"dataset not parseable (expects 'pixel_values'/'label'): {exc}"
                 dataset = _make_dummy_dataset(arch_config, num_classes, size=1000)
         else:
+            using_dummy = True
+            dummy_reason = "no dataset selected"
             dataset = _make_dummy_dataset(arch_config, num_classes, size=1000)
+
+        if using_dummy:
+            emit({
+                "type": "warning",
+                "using_dummy_data": True,
+                "message": f"Training on randomly-generated data — metrics are not meaningful ({dummy_reason}).",
+            })
 
         val_split = training_config.get("val_split", 0.2)
         val_size = max(1, int(len(dataset) * val_split))

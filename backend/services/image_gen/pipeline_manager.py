@@ -10,6 +10,38 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
+# Map UI sampler names to diffusers scheduler classes (+ optional config kwargs).
+_SAMPLER_MAP = {
+    "DPM++ 2M": ("DPMSolverMultistepScheduler", {"algorithm_type": "dpmsolver++"}),
+    "Euler": ("EulerDiscreteScheduler", {}),
+    "Euler a": ("EulerAncestralDiscreteScheduler", {}),
+    "DDIM": ("DDIMScheduler", {}),
+    "LMS": ("LMSDiscreteScheduler", {}),
+}
+
+
+def apply_sampler(pipe, sampler: str) -> None:
+    """Swap the pipeline scheduler to match the requested sampler.
+
+    Best-effort: some pipelines (e.g. FLUX) use fixed schedulers, so failures
+    are logged and ignored rather than aborting generation.
+    """
+    entry = _SAMPLER_MAP.get(sampler)
+    if not entry:
+        return
+    cls_name, extra = entry
+    try:
+        import diffusers
+
+        scheduler_cls = getattr(diffusers, cls_name, None)
+        if scheduler_cls is None or not hasattr(pipe, "scheduler"):
+            return
+        pipe.scheduler = scheduler_cls.from_config(pipe.scheduler.config, **extra)
+        logger.info(f"Applied sampler {sampler} -> {cls_name}")
+    except Exception as exc:
+        logger.info(f"Could not apply sampler {sampler}: {exc}")
+
+
 class PipelineManager:
     def __init__(self, max_loaded: int = 1):
         self._max_loaded = max_loaded

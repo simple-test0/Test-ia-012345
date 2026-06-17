@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Loader2, ImageIcon, ChevronDown, Plus } from 'lucide-react'
 import { generateImage, getModels, getJobs, getHFModelStatus } from '../api/image'
 import { useWebSocket } from '../hooks/useWebSocket'
-import { WS_BASE } from '../api/client'
+import { wsUrl } from '../api/client'
 import HFModelBrowser from '../components/image/HFModelBrowser'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
   const onCompletedRef = useRef(onCompleted)
   onCompletedRef.current = onCompleted
 
-  useWebSocket(`${WS_BASE}/ws/image/${jobId}`, {
+  useWebSocket(wsUrl(`/ws/image/${jobId}`), {
     onMessage: (raw) => {
       const evt = raw as WsEvent
       if (evt.type === 'step') {
@@ -208,9 +208,9 @@ export default function ImageGenerationPage() {
 
   // Hugging Face model browser + download tracking
   const [showBrowser, setShowBrowser] = useState(false)
-  const [downloadingModels, setDownloadingModels] = useState<Record<string, string>>({})
+  const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({})
 
-  useWebSocket(activeJobId ? `${WS_BASE}/ws/image/${activeJobId}` : null, {
+  useWebSocket(activeJobId ? wsUrl(`/ws/image/${activeJobId}`) : null, {
     onMessage: (raw) => {
       const evt = raw as WsEvent
       if (evt.type === 'queued') {
@@ -246,7 +246,7 @@ export default function ImageGenerationPage() {
     const interval = setInterval(() => {
       ids.forEach((id) => {
         getHFModelStatus(id)
-          .then((m: { status: string; error_message?: string }) => {
+          .then((m: { status: string; progress?: number; error_message?: string }) => {
             if (m.status === 'ready') {
               setDownloadingModels((prev) => {
                 const next = { ...prev }
@@ -261,6 +261,8 @@ export default function ImageGenerationPage() {
                 return next
               })
               setError(m.error_message || 'Le téléchargement du modèle a échoué.')
+            } else {
+              setDownloadingModels((prev) => ({ ...prev, [id]: m.progress ?? 0 }))
             }
           })
           .catch(() => {})
@@ -271,7 +273,7 @@ export default function ImageGenerationPage() {
   }, [downloadingModels])
 
   const handleDownloadStarted = (modelId: string) => {
-    setDownloadingModels((prev) => ({ ...prev, [modelId]: 'downloading' }))
+    setDownloadingModels((prev) => ({ ...prev, [modelId]: 0 }))
     refreshModels()
   }
 
@@ -411,13 +413,17 @@ export default function ImageGenerationPage() {
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-gray-500" />
           </div>
-          {Object.keys(downloadingModels).length > 0 && (
-            <span className="flex items-center gap-1.5 self-start rounded-full bg-purple-500/15
-              border border-purple-500/30 px-2 py-0.5 text-[10px] text-purple-300">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Téléchargement de {Object.keys(downloadingModels).length} modèle(s)…
-            </span>
-          )}
+          {Object.keys(downloadingModels).length > 0 && (() => {
+            const vals = Object.values(downloadingModels)
+            const avg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)
+            return (
+              <span className="flex items-center gap-1.5 self-start rounded-full bg-purple-500/15
+                border border-purple-500/30 px-2 py-0.5 text-[10px] text-purple-300">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Téléchargement de {vals.length} modèle(s)… {avg}%
+              </span>
+            )
+          })()}
           {models.length > 0 && selectedModel && (() => {
             const m = models.find((x) => x.id === selectedModel)
             return m && m.tags && m.tags.length > 0 ? (

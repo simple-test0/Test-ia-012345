@@ -1,7 +1,8 @@
 import asyncio
 import logging
+import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from core.config import settings
 
@@ -10,6 +11,27 @@ logger = logging.getLogger(__name__)
 
 def _token():
     return settings.huggingface_token or None
+
+
+def _repo_cache_path(repo_id: str) -> Path:
+    """Path where snapshot_download stores a repo under our cache_dir."""
+    folder = "models--" + repo_id.replace("/", "--")
+    return settings.models_dir / "diffusion" / folder
+
+
+def dir_size_bytes(path: Path) -> int:
+    try:
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except Exception:
+        return 0
+
+
+def download_progress(repo_id: str, total_bytes: int) -> int:
+    """Coarse 0-100 progress for an in-flight download (best effort)."""
+    if total_bytes <= 0:
+        return 0
+    current = dir_size_bytes(_repo_cache_path(repo_id))
+    return max(0, min(99, int(current * 100 / total_bytes)))
 
 
 def search_hf_models(query: str, limit: int = 25) -> List[dict]:
@@ -72,24 +94,44 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
                 await db.commit()
 
     try:
-        def _download():
-            from huggingface_hub import model_info, snapshot_download
+        def _probe():
+            from huggingface_hub import model_info
 
-            gated = False
-            pipeline_class = None
-            tags = None
-            downloads = 0
-            likes = 0
+            meta = {
+                "gated": False, "pipeline_class": None, "tags": None,
+                "downloads": 0, "likes": 0, "total_bytes": 0,
+            }
             try:
-                info = model_info(repo_id, token=_token())
-                gated = bool(getattr(info, "gated", False))
-                tags = list(getattr(info, "tags", None) or [])
-                downloads = getattr(info, "downloads", 0) or 0
-                likes = getattr(info, "likes", 0) or 0
+                info = model_info(repo_id, token=_token(), files_metadata=True)
+                meta["gated"] = bool(getattr(info, "gated", False))
+                meta["tags"] = list(getattr(info, "tags", None) or [])
+                meta["downloads"] = getattr(info, "downloads", 0) or 0
+                meta["likes"] = getattr(info, "likes", 0) or 0
                 card = getattr(info, "cardData", None) or {}
-                pipeline_class = card.get("pipeline_tag") if isinstance(card, dict) else None
+                meta["pipeline_class"] = card.get("pipeline_tag") if isinstance(card, dict) else None
+                meta["total_bytes"] = sum(
+                    getattr(s, "size", None) or 0
+                    for s in (getattr(info, "siblings", None) or [])
+                )
             except Exception:
                 pass
+
+            # Refuse to start if free disk is clearly insufficient.
+            free = shutil.disk_usage(str(diffusion_dir)).free
+            needed = max(int(meta["total_bytes"] * 1.1), settings.min_free_disk_mb * 1024 * 1024)
+            if meta["total_bytes"] and free < needed:
+                raise RuntimeError(
+                    f"Insufficient disk space: need ~{needed // (1024*1024)}MB, "
+                    f"have {free // (1024*1024)}MB free."
+                )
+            return meta
+
+        meta = await asyncio.get_event_loop().run_in_executor(None, _probe)
+        # Persist metadata + estimated total so the status endpoint can report progress.
+        await _update("downloading", **meta)
+
+        def _fetch():
+            from huggingface_hub import snapshot_download
 
             # No `revision` -> always pulls the latest `main` snapshot.
             path = snapshot_download(
@@ -97,22 +139,10 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
                 cache_dir=str(diffusion_dir),
                 token=_token(),
             )
+            return {"local_path": path, "size_bytes": dir_size_bytes(Path(path))}
 
-            size_bytes = sum(
-                f.stat().st_size for f in Path(path).rglob("*") if f.is_file()
-            )
-            return {
-                "local_path": path,
-                "size_bytes": size_bytes,
-                "gated": gated,
-                "pipeline_class": pipeline_class,
-                "tags": tags,
-                "downloads": downloads,
-                "likes": likes,
-            }
-
-        meta = await asyncio.get_event_loop().run_in_executor(None, _download)
-        await _update("ready", **meta)
+        result = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+        await _update("ready", **result)
 
     except Exception as exc:
         message = str(exc)

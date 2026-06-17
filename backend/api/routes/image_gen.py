@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
 from models.diffusion_model import DiffusionModel
 from models.image_job import ImageJob
-from services.image_gen.hf_connector import download_hf_model, search_hf_models
+from services.image_gen.hf_connector import download_hf_model, download_progress, search_hf_models
 from services.image_gen.model_registry import (
     curated_models,
     get_compatible_models,
@@ -44,6 +44,12 @@ class HFModelDownloadRequest(BaseModel):
 
 
 def _downloaded_model_dict(m: DiffusionModel, vram_mb: int) -> dict:
+    if m.status == "ready":
+        progress = 100
+    elif m.status == "downloading":
+        progress = download_progress(m.repo_id, m.total_bytes or 0)
+    else:
+        progress = 0
     return {
         "id": m.id,
         "name": m.name,
@@ -61,6 +67,8 @@ def _downloaded_model_dict(m: DiffusionModel, vram_mb: int) -> dict:
         "repo_id": m.repo_id,
         "gated": m.gated,
         "size_bytes": m.size_bytes,
+        "total_bytes": m.total_bytes,
+        "progress": progress,
         "error_message": m.error_message,
     }
 
@@ -151,6 +159,7 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "cfg_scale": req.cfg_scale,
         "seed": seed,
         "num_images": req.num_images,
+        "sampler": req.sampler,
     }
     await generation_queue.put(queue_job)
 

@@ -33,6 +33,8 @@ class DiffusionModel(Base):
     )
     local_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Estimated total download size (from HF metadata), used for progress %.
+    total_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
     min_vram_mb: Mapped[int] = mapped_column(Integer, default=0)
     recommended_steps: Mapped[int] = mapped_column(Integer, default=25)

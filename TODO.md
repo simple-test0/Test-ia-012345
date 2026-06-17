@@ -1,35 +1,35 @@
-# AI Studio — TODO (améliorations reportées)
+# AI Studio — TODO
 
-Ces points ont été identifiés lors de la revue mais volontairement reportés pour
-se concentrer d'abord sur les bloquants et le connecteur Hugging Face.
+## ✅ Done
 
-## Sécurité
-- [ ] **`code_executor`** (`backend/services/agent/tools/code_executor.py`) : exécute du Python
-      arbitraire sans sandbox, pilotable par le LLM via WebSocket. Le désactiver par défaut
-      derrière un flag de configuration, ajouter des limites de ressources (CPU/mémoire),
-      un timeout strict et un avertissement dans l'UI. Idéalement isoler (conteneur / `nsjail`).
-- [ ] **`calculator`** (`backend/services/agent/tools/calculator.py`) : remplacer `eval` par un
-      parseur d'expressions sûr (ex. `asteval`) pour éviter les abus type `(9**9)**9` (DoS CPU).
-- [ ] **Auth / CSRF** : aucune authentification sur les routes REST ni les WebSockets. Sur une app
-      locale, un site tiers ouvert dans le navigateur pourrait déclencher des actions.
+### Sécurité
+- [x] **`code_executor`** désactivé par défaut (`ENABLE_CODE_EXECUTOR`), exécution isolée
+      (`python -I`), timeout borné et limites mémoire/taille de fichier (POSIX).
+- [x] **`calculator`** : `eval` remplacé par un évaluateur AST sûr (noms autorisés, garde
+      anti-DoS sur les exposants).
+- [x] **Auth / CSRF** : token partagé optionnel (`API_TOKEN`) sur REST (`X-API-Token`) et
+      WebSocket (`?token=`) ; côté front via `VITE_API_TOKEN`. Header custom ⇒ non exploitable en CSRF.
 
-## Fonctionnel
-- [ ] **Sampler** : l'UI envoie un sampler (DPM++ 2M, Euler…) mais le worker
-      (`backend/services/image_gen/worker.py`) ne configure aucun scheduler diffusers. Câbler le
-      mapping sampler → scheduler, sinon le réglage est trompeur.
-- [ ] **Labs / datasets** : le trainer (`backend/services/labs/trainer.py`) ne gère que les datasets
-      au format `pixel_values`/`label` et retombe silencieusement sur des **données aléatoires**.
-      Gérer plus de formats et signaler explicitement le repli côté UI.
-- [ ] **Agent** : remplacer le parsing regex du bloc ```` ```tool ```` par le *function/tool calling
-      natif* d'Ollama (plus robuste).
-- [ ] **Téléchargement de modèles** : ajouter un pré-check d'espace disque (les modèles font 7–24 Go)
-      et une vraie barre de progression (bridge `tqdm` de `snapshot_download`). Actuellement le suivi
-      est un statut `downloading`/`ready`/`error` poll-é côté front.
+### Fonctionnel
+- [x] **Sampler** câblé : mapping sampler → scheduler diffusers (DPM++ 2M, Euler, Euler a, DDIM, LMS).
+- [x] **Labs / données aléatoires** : événement `warning` explicite émis et affiché quand
+      l'entraînement retombe sur des données générées.
+- [x] **Tool-calling Ollama natif** : le planner utilise l'API `tools` d'Ollama (repli regex conservé).
+- [x] **Pré-check espace disque** avant download HF + taille estimée + **progression %** (polling).
 
-## Qualité projet
-- [ ] **README** : documenter l'installation, le lancement et les prérequis (Ollama, GPU, token HF).
-- [ ] **Tests** (backend + frontend) et **CI**.
-- [ ] **Dockerfile** / docker-compose pour un démarrage reproductible.
-- [ ] **`start.sh`** : tourne actuellement `uvicorn --reload` (mode dev) ; prévoir un mode prod et
-      vérifier/démarrer Ollama.
-- [ ] Nettoyer les `try/except: pass` muets (preview VAE, GPUtil…) qui masquent les erreurs.
+### Qualité projet
+- [x] **README** complet.
+- [x] **Tests** backend (pytest, sans torch) + **CI** GitHub Actions (backend + build frontend).
+- [x] **Dockerfile** backend & frontend + **docker-compose** (backend, frontend, Ollama).
+- [x] **`start.sh`** : mode prod (`MODE=prod`, sans `--reload`) + warning si Ollama injoignable.
+- [x] **Auto-migration légère** SQLite (ajout de colonnes manquantes au démarrage).
+- [x] Remplacement des `except: pass` muets (preview VAE, GPUtil) par des logs debug.
+
+## ⏭️ Restant (améliorations futures)
+- [ ] Migrations DB robustes via Alembic (l'auto-migration actuelle est minimaliste, SQLite only).
+- [ ] Barre de progression de download exacte via un vrai bridge `tqdm` (actuellement estimée par
+      la taille du dossier vs métadonnées HF).
+- [ ] Labs : support de davantage de formats de datasets (au-delà de `pixel_values`/`label`).
+- [ ] Sandboxing renforcé de `code_executor` (conteneur / `nsjail`) au-delà des rlimits POSIX.
+- [ ] Tests end-to-end incluant torch/diffusers (lourds — exclus de la CI légère).
+- [ ] Image generation : ControlNet / img2img / LoRA.

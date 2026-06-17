@@ -40,6 +40,13 @@ if [ ! -d "$FRONTEND/node_modules" ]; then
   cd "$FRONTEND" && npm install && cd "$ROOT"
 fi
 
+# Warn if Ollama (used by the agent) isn't reachable.
+OLLAMA_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
+if ! curl -sf "$OLLAMA_URL/api/tags" >/dev/null 2>&1; then
+  echo "[warn] Ollama not reachable at $OLLAMA_URL — the Agent tab will be unavailable."
+  echo "       Install/start it from https://ollama.com (optional)."
+fi
+
 echo ""
 echo "[backend]  Starting FastAPI on http://localhost:8000"
 echo "[frontend] Starting Vite on  http://localhost:5173"
@@ -47,9 +54,13 @@ echo ""
 echo "Press Ctrl+C to stop both servers."
 echo ""
 
-# Start backend
+# Start backend. Use --reload only in dev (MODE != prod).
 cd "$BACKEND"
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
+if [ "${MODE:-dev}" = "prod" ]; then
+  uvicorn main:app --host 0.0.0.0 --port 8000 &
+else
+  uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
+fi
 BACKEND_PID=$!
 
 # Start frontend

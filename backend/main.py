@@ -60,12 +60,16 @@ app.add_middleware(
 )
 
 # REST routes
-from api.routes import hardware, image_gen, agent, labs  # noqa: E402
+from fastapi import Depends  # noqa: E402
 
-app.include_router(hardware.router, prefix="/api/v1")
-app.include_router(image_gen.router, prefix="/api/v1")
-app.include_router(agent.router, prefix="/api/v1")
-app.include_router(labs.router, prefix="/api/v1")
+from api.routes import hardware, image_gen, agent, labs  # noqa: E402
+from core.security import require_api_token  # noqa: E402
+
+_auth = [Depends(require_api_token)]
+app.include_router(hardware.router, prefix="/api/v1", dependencies=_auth)
+app.include_router(image_gen.router, prefix="/api/v1", dependencies=_auth)
+app.include_router(agent.router, prefix="/api/v1", dependencies=_auth)
+app.include_router(labs.router, prefix="/api/v1", dependencies=_auth)
 
 # WebSocket routes
 from api.websockets.image_ws import ws_router as image_ws  # noqa: E402

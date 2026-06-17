@@ -1,9 +1,34 @@
 import subprocess
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
+from core.config import settings
 from services.agent.tool_registry import register_tool
+
+
+def _build_preexec(max_memory_mb: int):
+    """Return a preexec_fn that applies memory/file-size limits (POSIX only)."""
+    try:
+        import resource
+    except ImportError:
+        return None
+
+    def _limit():
+        mem_bytes = max_memory_mb * 1024 * 1024
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+        except (ValueError, OSError):
+            pass
+        try:
+            # Cap output files at 50MB to prevent disk-fill.
+            fsize = 50 * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
+        except (ValueError, OSError):
+            pass
+
+    return _limit
 
 
 @register_tool(
@@ -13,22 +38,37 @@ from services.agent.tool_registry import register_tool
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "Python code to execute"},
-            "timeout": {"type": "integer", "description": "Execution timeout in seconds (default 15)", "default": 15},
+            "timeout": {"type": "integer", "description": "Execution timeout in seconds", "default": 15},
         },
         "required": ["code"],
     },
 )
-def code_executor(code: str, timeout: int = 15) -> str:
+def code_executor(code: str, timeout: int = None) -> str:
+    if not settings.enable_code_executor:
+        return (
+            "Code execution is disabled. It runs arbitrary Python without a full "
+            "sandbox. To enable it, set ENABLE_CODE_EXECUTOR=true (preferably in an "
+            "isolated container)."
+        )
+
+    # Clamp the timeout to the configured maximum.
+    max_timeout = settings.code_executor_timeout
+    if timeout is None:
+        timeout = max_timeout
+    timeout = max(1, min(int(timeout), max_timeout))
+
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
-        f.write(code)
+        f.write(textwrap.dedent(code))
         tmp_path = f.name
 
     try:
         result = subprocess.run(
-            [sys.executable, tmp_path],
+            # -I: isolated mode (ignore env vars / user site-packages).
+            [sys.executable, "-I", tmp_path],
             capture_output=True,
             text=True,
             timeout=timeout,
+            preexec_fn=_build_preexec(settings.code_executor_max_memory_mb),
         )
         output = result.stdout
         if result.stderr:
