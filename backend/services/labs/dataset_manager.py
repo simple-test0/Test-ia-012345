@@ -36,8 +36,10 @@ async def download_huggingface_dataset(
                 await db.commit()
 
     try:
+
         def _download():
             from datasets import load_dataset
+
             ds = load_dataset(hf_dataset_id)
             ds.save_to_disk(str(dataset_dir))
             total = sum(len(split) for split in ds.values())
@@ -110,9 +112,7 @@ async def process_upload(
                     if total_bytes > max_bytes:
                         out.close()
                         dest.unlink(missing_ok=True)
-                        raise ValueError(
-                            f"Upload exceeds the {settings.max_upload_mb} MB limit"
-                        )
+                        raise ValueError(f"Upload exceeds the {settings.max_upload_mb} MB limit")
                     out.write(chunk)
             num_files += 1
 

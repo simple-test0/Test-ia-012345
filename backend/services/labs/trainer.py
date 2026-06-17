@@ -1,4 +1,5 @@
 """Training worker that runs in a separate process to avoid GIL contention."""
+
 import atexit
 import contextlib
 import logging
@@ -37,6 +38,7 @@ def _training_process(
     try:
         # ── Build model ──────────────────────────────────────────────────────
         from services.labs.architecture_registry import get_arch
+
         spec = get_arch(arch_id)
         if spec is None:
             raise ValueError(f"Unknown architecture: {arch_id}")
@@ -52,13 +54,15 @@ def _training_process(
                 ckpt = torch.load(init_from, map_location=device)
                 state = ckpt.get("model_state", ckpt) if isinstance(ckpt, dict) else ckpt
                 missing, unexpected = model.load_state_dict(state, strict=False)
-                emit({
-                    "type": "info",
-                    "message": (
-                        f"Warm-started from checkpoint "
-                        f"({len(state)} tensors, {len(missing)} new, {len(unexpected)} unused)"
-                    ),
-                })
+                emit(
+                    {
+                        "type": "info",
+                        "message": (
+                            f"Warm-started from checkpoint "
+                            f"({len(state)} tensors, {len(missing)} new, {len(unexpected)} unused)"
+                        ),
+                    }
+                )
             except Exception as exc:
                 emit({"type": "info", "message": f"Could not load init checkpoint: {exc}"})
 
@@ -80,10 +84,12 @@ def _training_process(
             # Attempt to load a HF dataset saved as arrow files
             try:
                 from datasets import load_from_disk
+
                 hf_ds = load_from_disk(dataset_path)
                 # Wrap into tensors (basic classification support)
                 # This is a best-effort; real use cases need task-specific handling
                 import numpy as np
+
                 xs = torch.FloatTensor(np.array(hf_ds["train"]["pixel_values"]))
                 ys = torch.LongTensor(np.array(hf_ds["train"]["label"]))
                 dataset = TensorDataset(xs, ys)
@@ -102,12 +108,18 @@ def _training_process(
         num_workers = min(int(training_config.get("num_workers", 2)), 4, max(os.cpu_count() or 1, 1))
         batch_size = training_config.get("batch_size", 16)
         train_loader = DataLoader(
-            train_ds, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=device.type == "cuda",
+            train_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=device.type == "cuda",
             persistent_workers=num_workers > 0,
         )
         val_loader = DataLoader(
-            val_ds, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers,
+            val_ds,
+            batch_size=batch_size * 2,
+            shuffle=False,
+            num_workers=num_workers,
             persistent_workers=num_workers > 0,
         )
 
@@ -137,7 +149,9 @@ def _training_process(
         if sched_name == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
         elif sched_name == "linear":
-            scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=epochs)
+            scheduler = torch.optim.lr_scheduler.LinearLR(
+                optimizer, start_factor=1.0, end_factor=0.1, total_iters=epochs
+            )
         elif sched_name == "onecycle":
             # scheduler.step() fires once per *optimizer* step (i.e. per
             # accumulation window), so size the cycle accordingly.
@@ -207,13 +221,15 @@ def _training_process(
                 total += labels.size(0)
 
                 if step % 10 == 0:
-                    emit({
-                        "type": "batch_metric",
-                        "epoch": epoch,
-                        "step": step,
-                        "loss": round(train_loss / (step + 1), 4),
-                        "lr": optimizer.param_groups[0]["lr"],
-                    })
+                    emit(
+                        {
+                            "type": "batch_metric",
+                            "epoch": epoch,
+                            "step": step,
+                            "loss": round(train_loss / (step + 1), 4),
+                            "lr": optimizer.param_groups[0]["lr"],
+                        }
+                    )
 
             train_loss /= max(len(train_loader), 1)
             train_acc = correct / max(total, 1)
@@ -241,12 +257,15 @@ def _training_process(
 
             # Checkpoint
             ckpt_path = str(checkpoint_dir_path / f"epoch_{epoch:04d}.pt")
-            torch.save({
-                "epoch": epoch,
-                "model_state": model.state_dict(),
-                "optimizer_state": optimizer.state_dict(),
-                "val_loss": val_loss,
-            }, ckpt_path)
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state": model.state_dict(),
+                    "optimizer_state": optimizer.state_dict(),
+                    "val_loss": val_loss,
+                },
+                ckpt_path,
+            )
 
             if val_loss < best_val_loss - 1e-4:
                 best_val_loss = val_loss
@@ -255,22 +274,26 @@ def _training_process(
             else:
                 epochs_no_improve += 1
 
-            emit({
-                "type": "epoch_metric",
-                "epoch": epoch,
-                "total_epochs": epochs,
-                "train_loss": round(train_loss, 4),
-                "val_loss": round(val_loss, 4),
-                "train_acc": round(train_acc, 4),
-                "val_acc": round(val_acc, 4),
-                "lr": optimizer.param_groups[0]["lr"],
-            })
+            emit(
+                {
+                    "type": "epoch_metric",
+                    "epoch": epoch,
+                    "total_epochs": epochs,
+                    "train_loss": round(train_loss, 4),
+                    "val_loss": round(val_loss, 4),
+                    "train_acc": round(train_acc, 4),
+                    "val_acc": round(val_acc, 4),
+                    "lr": optimizer.param_groups[0]["lr"],
+                }
+            )
 
             if patience > 0 and epochs_no_improve >= patience:
-                emit({
-                    "type": "info",
-                    "message": f"Early stopping at epoch {epoch} (no improvement for {patience} epochs)",
-                })
+                emit(
+                    {
+                        "type": "info",
+                        "message": f"Early stopping at epoch {epoch} (no improvement for {patience} epochs)",
+                    }
+                )
                 break
 
         emit({"type": "completed", "best_checkpoint": best_ckpt})
@@ -284,6 +307,7 @@ def _training_process(
             # instead of a raw CUDA stack trace.
             try:
                 import torch
+
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except Exception:
@@ -375,8 +399,17 @@ class TrainingManager:
         # shutdown via shutdown_all().
         p = mp.Process(
             target=_training_process,
-            args=(run_id, arch_id, arch_config, training_config, dataset_path,
-                  checkpoint_dir, q, stop_ev, pause_ev),
+            args=(
+                run_id,
+                arch_id,
+                arch_config,
+                training_config,
+                dataset_path,
+                checkpoint_dir,
+                q,
+                stop_ev,
+                pause_ev,
+            ),
             daemon=False,
         )
         p.start()

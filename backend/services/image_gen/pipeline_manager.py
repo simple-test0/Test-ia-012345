@@ -6,6 +6,7 @@ hardware and the recommender. Loaded pipelines are cached LRU-style up to
 ``settings.max_pipelines_loaded`` so repeated generations reuse the warm model
 instead of re-loading from disk.
 """
+
 import asyncio
 import base64
 import io
@@ -71,9 +72,7 @@ class PipelineManager:
             # Some repos only ship non-safetensors weights; retry once.
             logger.warning("safetensors load failed for %s, retrying without", repo_id, exc_info=True)
             try:
-                pipe = AutoPipelineForText2Image.from_pretrained(
-                    repo_id, torch_dtype=dtype, token=token
-                )
+                pipe = AutoPipelineForText2Image.from_pretrained(repo_id, torch_dtype=dtype, token=token)
             except Exception:
                 # AutoPipeline can't always resolve newer families (FLUX / SD3.5)
                 # on older diffusers — fall back to the registry's explicit class.
@@ -95,9 +94,7 @@ class PipelineManager:
         logger.info("Falling back to explicit pipeline class %s for %s", class_name, repo_id)
         pipe_cls = getattr(diffusers, class_name)
         try:
-            return pipe_cls.from_pretrained(
-                repo_id, torch_dtype=dtype, use_safetensors=True, token=token
-            )
+            return pipe_cls.from_pretrained(repo_id, torch_dtype=dtype, use_safetensors=True, token=token)
         except Exception:
             return pipe_cls.from_pretrained(repo_id, torch_dtype=dtype, token=token)
 

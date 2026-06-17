@@ -56,6 +56,7 @@ async def export_model(
 
         elif export_format == "safetensors":
             from safetensors.torch import save_file
+
             out_path = str(out_dir / "model.safetensors")
             tensors = {k: v.contiguous() for k, v in model.state_dict().items()}
             save_file(tensors, out_path)

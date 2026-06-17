@@ -9,7 +9,10 @@ from services.agent.tool_registry import register_tool
     parameters={
         "type": "object",
         "properties": {
-            "expression": {"type": "string", "description": "Math expression to evaluate, e.g. '2 ** 10 + sqrt(144)'"},
+            "expression": {
+                "type": "string",
+                "description": "Math expression to evaluate, e.g. '2 ** 10 + sqrt(144)'",
+            },
         },
         "required": ["expression"],
     },

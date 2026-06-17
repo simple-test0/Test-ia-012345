@@ -39,9 +39,7 @@ async def get_tools():
 
 @router.get("/sessions")
 async def list_sessions(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(AgentSession).order_by(AgentSession.updated_at.desc()).limit(50)
-    )
+    result = await db.execute(select(AgentSession).order_by(AgentSession.updated_at.desc()).limit(50))
     sessions = result.scalars().all()
     return [
         {
@@ -76,9 +74,7 @@ class RenameSessionRequest(BaseModel):
 
 
 @router.patch("/sessions/{session_id}")
-async def rename_session(
-    session_id: str, req: RenameSessionRequest, db: AsyncSession = Depends(get_db)
-):
+async def rename_session(session_id: str, req: RenameSessionRequest, db: AsyncSession = Depends(get_db)):
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="Name cannot be empty")

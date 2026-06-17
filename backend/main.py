@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
 
     # Generation queue + worker
     from services.image_gen.worker import GenerationWorker
+
     queue: asyncio.Queue = asyncio.Queue(maxsize=settings.max_queue_size)
     worker = GenerationWorker(queue)
     worker_task = asyncio.create_task(worker.run())
@@ -60,13 +61,16 @@ async def lifespan(app: FastAPI):
         await worker_task
 
     from services.image_gen.pipeline_manager import pipeline_manager
+
     await pipeline_manager.unload_all()
 
     from services.agent.ollama_client import ollama_client
+
     await ollama_client.aclose()
 
     # Terminate any live training subprocesses (non-daemonic).
     from services.labs.trainer import training_manager
+
     training_manager.shutdown_all()
     logger.info("AI Studio backend stopped")
 

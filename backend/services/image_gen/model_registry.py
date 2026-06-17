@@ -6,6 +6,7 @@ without touching the pipeline/worker code. ``AutoPipelineForText2Image`` resolve
 the concrete pipeline class from ``repo_id`` automatically, so adding a model is
 usually a one-line change.
 """
+
 from dataclasses import dataclass, field
 from typing import List, Optional
 

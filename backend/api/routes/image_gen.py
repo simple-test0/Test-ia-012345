@@ -78,7 +78,7 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         )
 
     job_id = str(uuid.uuid4())
-    seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 32 - 1)
+    seed = req.seed if req.seed != -1 else random.randint(0, 2**32 - 1)
 
     db_job = ImageJob(
         id=job_id,

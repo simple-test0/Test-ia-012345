@@ -4,6 +4,7 @@ A single ``httpx.AsyncClient`` is reused across requests (keep-alive connection
 pooling) instead of opening a fresh TCP/TLS connection per call, which both
 removes per-request overhead and avoids socket exhaustion under load.
 """
+
 import json
 import logging
 from typing import Callable, List, Optional

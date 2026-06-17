@@ -125,6 +125,7 @@ def _launch_training(
 
 # ── Architectures ─────────────────────────────────────────────────────────────
 
+
 @router.get("/architectures")
 async def get_architectures(vram_mb: int = 0, task_type: str = ""):
     archs = list_archs(vram_mb=vram_mb, task_type=task_type)
@@ -144,6 +145,7 @@ async def get_architectures(vram_mb: int = 0, task_type: str = ""):
 
 
 # ── Datasets ──────────────────────────────────────────────────────────────────
+
 
 @router.get("/datasets")
 async def list_datasets(db: AsyncSession = Depends(get_db)):
@@ -228,6 +230,7 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
 
 # ── Training Runs ─────────────────────────────────────────────────────────────
+
 
 class CreateRunRequest(BaseModel):
     name: str
@@ -459,6 +462,7 @@ async def download_export(run_id: str):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _dataset_dict(d: Dataset) -> dict:
     return {

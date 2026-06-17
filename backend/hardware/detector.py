@@ -15,6 +15,7 @@ load) are refreshed on each rebuild; nothing here ever raises — every probe is
 wrapped and degrades gracefully so the rest of the app keeps working on exotic
 or partially-supported machines.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -117,21 +118,13 @@ def detect_hardware(force_refresh: bool = False) -> HardwareInfo:
     """
     global _cached_info, _cached_at
     now = time.monotonic()
-    if (
-        not force_refresh
-        and _cached_info is not None
-        and (now - _cached_at) < _CACHE_TTL_SECONDS
-    ):
+    if not force_refresh and _cached_info is not None and (now - _cached_at) < _CACHE_TTL_SECONDS:
         return _cached_info
 
     with _cache_lock:
         # Re-check after acquiring the lock to avoid a thundering herd.
         now = time.monotonic()
-        if (
-            not force_refresh
-            and _cached_info is not None
-            and (now - _cached_at) < _CACHE_TTL_SECONDS
-        ):
+        if not force_refresh and _cached_info is not None and (now - _cached_at) < _CACHE_TTL_SECONDS:
             return _cached_info
 
         info = _build_hardware_info()
@@ -151,9 +144,9 @@ def _build_hardware_info() -> HardwareInfo:
 def _detect_memory(info: HardwareInfo) -> None:
     try:
         vm = psutil.virtual_memory()
-        info.ram_total_mb = vm.total // (1024 ** 2)
-        info.ram_used_mb = vm.used // (1024 ** 2)
-        info.ram_free_mb = vm.available // (1024 ** 2)
+        info.ram_total_mb = vm.total // (1024**2)
+        info.ram_used_mb = vm.used // (1024**2)
+        info.ram_free_mb = vm.available // (1024**2)
     except Exception:
         logger.warning("RAM detection failed", exc_info=True)
 
@@ -251,10 +244,10 @@ def _detect_cuda_like(info: HardwareInfo, torch, backend: str) -> None:
     for i in range(device_count):
         try:
             props = torch.cuda.get_device_properties(i)
-            vram_total = props.total_memory // (1024 ** 2)
+            vram_total = props.total_memory // (1024**2)
             try:
                 free_bytes, _ = torch.cuda.mem_get_info(i)
-                vram_free = free_bytes // (1024 ** 2)
+                vram_free = free_bytes // (1024**2)
             except Exception:
                 vram_free = vram_total
             vram_used = max(0, vram_total - vram_free)
@@ -274,8 +267,10 @@ def _detect_cuda_like(info: HardwareInfo, torch, backend: str) -> None:
                     vram_free_mb=vram_free,
                     utilization_percent=util_pct,
                     compute_capability=f"{props.major}.{props.minor}",
-                    cuda_version=(getattr(torch.version, "hip", None) if backend == BACKEND_ROCM
-                                  else torch.version.cuda) or "unknown",
+                    cuda_version=(
+                        getattr(torch.version, "hip", None) if backend == BACKEND_ROCM else torch.version.cuda
+                    )
+                    or "unknown",
                     driver_version=driver_ver,
                     backend=backend,
                     device_str=f"cuda:{i}",
@@ -295,11 +290,11 @@ def _detect_xpu(info: HardwareInfo, torch) -> None:
     for i in range(device_count):
         try:
             props = torch.xpu.get_device_properties(i)
-            vram_total = getattr(props, "total_memory", 0) // (1024 ** 2)
+            vram_total = getattr(props, "total_memory", 0) // (1024**2)
             vram_free = vram_total
             try:
                 free_bytes, _ = torch.xpu.mem_get_info(i)
-                vram_free = free_bytes // (1024 ** 2)
+                vram_free = free_bytes // (1024**2)
             except Exception:
                 pass
             info.gpus.append(
@@ -326,7 +321,7 @@ def _detect_mps(info: HardwareInfo, torch) -> None:
     # working-set size when available, otherwise budget ~70% of system RAM.
     budget_mb = 0
     try:
-        budget_mb = int(torch.mps.recommended_max_memory() // (1024 ** 2))
+        budget_mb = int(torch.mps.recommended_max_memory() // (1024**2))
     except Exception:
         logger.debug("torch.mps.recommended_max_memory unavailable", exc_info=True)
     if budget_mb <= 0:
@@ -334,7 +329,7 @@ def _detect_mps(info: HardwareInfo, torch) -> None:
 
     used_mb = 0
     with contextlib.suppress(Exception):
-        used_mb = int(torch.mps.current_allocated_memory() // (1024 ** 2))
+        used_mb = int(torch.mps.current_allocated_memory() // (1024**2))
 
     info.gpus.append(
         GPUInfo(

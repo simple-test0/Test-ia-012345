@@ -14,6 +14,7 @@ Design goals
 * **Unified-memory aware** — Apple Silicon / CPU budgets are derived from system
   RAM instead of pretending there is dedicated VRAM.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -318,8 +319,9 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
     prefer_bf16 = backend in (BACKEND_MPS, BACKEND_XPU)
 
     image_gen = _recommend_image(tier_budget, backend, is_nvidia, supports_compile, prefer_bf16)
-    training = _recommend_training(budget_mb, tier_budget, cpu_cores, supports_amp, supports_compile,
-                                   is_discrete, prefer_bf16)
+    training = _recommend_training(
+        budget_mb, tier_budget, cpu_cores, supports_amp, supports_compile, is_discrete, prefer_bf16
+    )
     agent = _recommend_agent(tier_budget, backend)
 
     return RecommendationSet(
@@ -374,8 +376,9 @@ def _recommend_image(budget_mb, backend, is_nvidia, supports_compile, prefer_bf1
     )
 
 
-def _recommend_training(budget_mb, tier_budget, cpu_cores, supports_amp, supports_compile,
-                        is_discrete, prefer_bf16):
+def _recommend_training(
+    budget_mb, tier_budget, cpu_cores, supports_amp, supports_compile, is_discrete, prefer_bf16
+):
     use_amp = supports_amp and tier_budget >= 4096
     fp16_sizing = use_amp
     # Sizing uses the *true* (conservative) budget so we never over-commit VRAM.

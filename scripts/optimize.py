@@ -11,6 +11,7 @@ the best settings, and writes a tuned ``backend/.env``. Safe to re-run anytime
 It degrades gracefully: with no GPU (or torch not yet installed) it produces a
 sensible CPU profile instead of failing.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -70,8 +71,9 @@ def write_env(env: dict, path: Path, tier: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Optimise AI Studio for this machine.")
-    parser.add_argument("--print", dest="dry", action="store_true",
-                        help="Show the recommended settings without writing .env")
+    parser.add_argument(
+        "--print", dest="dry", action="store_true", help="Show the recommended settings without writing .env"
+    )
     args = parser.parse_args()
 
     try:
@@ -88,19 +90,21 @@ def main() -> int:
 
     gpu = hw.primary_gpu
     print("\n=== AI Studio — hardware optimisation ===")
-    print(f"  Accelerator : {rec.backend.upper()}"
-          + (f" · {gpu.name}" if gpu else " (no GPU detected)"))
-    print(f"  VRAM        : {_human_gb(rec.vram_mb)}"
-          + ("  (reported by driver)" if rec.vram_mb else ""))
+    print(f"  Accelerator : {rec.backend.upper()}" + (f" · {gpu.name}" if gpu else " (no GPU detected)"))
+    print(f"  VRAM        : {_human_gb(rec.vram_mb)}" + ("  (reported by driver)" if rec.vram_mb else ""))
     print(f"  System RAM  : {_human_gb(hw.ram_total_mb)}")
     print(f"  Tier        : {rec.tier_label}")
     print("  ---")
     print(f"  Image models: {', '.join(rec.image_gen.recommended_models)}")
-    print(f"  Max res     : {rec.image_gen.max_resolution[0]}x{rec.image_gen.max_resolution[1]}"
-          f" · {rec.image_gen.recommended_steps} steps · {rec.image_gen.compute_dtype}")
+    print(
+        f"  Max res     : {rec.image_gen.max_resolution[0]}x{rec.image_gen.max_resolution[1]}"
+        f" · {rec.image_gen.recommended_steps} steps · {rec.image_gen.compute_dtype}"
+    )
     print(f"  LLM models  : {', '.join(rec.agent.recommended_models)}  (Ollama, {rec.agent.quantization})")
-    print(f"  Train batch : {rec.training.recommended_batch_size}"
-          f" · {rec.training.use_mixed_precision} · compile={rec.training.enable_torch_compile}")
+    print(
+        f"  Train batch : {rec.training.recommended_batch_size}"
+        f" · {rec.training.use_mixed_precision} · compile={rec.training.enable_torch_compile}"
+    )
     print("  ---")
     print("  .env settings:")
     for k, v in env.items():

@@ -42,7 +42,9 @@ async def hardware_info():
             "logical_cores": hw.cpu.logical_cores,
             "utilization_percent": hw.cpu.utilization_percent,
             "frequency_mhz": hw.cpu.frequency_mhz,
-        } if hw.cpu else None,
+        }
+        if hw.cpu
+        else None,
     }
 
 

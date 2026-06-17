@@ -93,14 +93,18 @@ class ReactAgent:
             tool_result = await execute_tool(tool_name, tool_args)
 
             if on_event:
-                on_event({"type": "tool_result", "id": call_id, "tool_name": tool_name, "result": str(tool_result)})
+                on_event(
+                    {"type": "tool_result", "id": call_id, "tool_name": tool_name, "result": str(tool_result)}
+                )
 
             # Append assistant turn + tool result to history
             history.append({"role": "assistant", "content": response})
-            history.append({
-                "role": "user",
-                "content": f"Tool result for {tool_name}:\n{tool_result}",
-            })
+            history.append(
+                {
+                    "role": "user",
+                    "content": f"Tool result for {tool_name}:\n{tool_result}",
+                }
+            )
 
         if on_event:
             on_event({"type": "error", "message": "Max iterations reached"})
