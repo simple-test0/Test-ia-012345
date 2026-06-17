@@ -142,7 +142,27 @@ Exemple vérifié (RTX 4060 Ti 8 Go / 46 Go) → tier **High (8-12 GB)** : SDXL 
 SDXL-Turbo + SD1.5, 1024px, fp16, xformers, `torch.compile` ; agents Llama3.1-8B
 / Qwen2.5-7B (q4) ; entraînement toutes architectures, batch auto, AMP fp16.
 
-## 9. Pistes restantes (suggestions)
+## 9. Revue complète du projet (corrections)
+
+Audit transversal (3 passes : services backend, core/données, frontend).
+Corrections retenues (faux positifs écartés : `created_at` présent, garde
+clip-grad correcte, `_safe_name` OK, champ `tool_name` en trop inoffensif) :
+
+- **Contrat image cassé (bloquant)** : `/image/jobs` renvoie `id`, le frontend
+  utilisait `job_id` → clés/WS indéfinis. Normalisé côté frontend (`id → job_id`).
+- **Progression image invisible** : la barre/preview n'apparaissait jamais (statut
+  jamais `running`). Affichage dès `queued`, gestion de l'erreur, et **suppression
+  du WebSocket dupliqué** sur le job actif.
+- **Reconnexion WS fantôme** : `useWebSocket` se reconnectait après démontage
+  volontaire (close ≠ 1000). Ajout d'un garde `closingRef` + respect de `enabled`.
+- **Envois WS concurrents** : un burst de tokens d'agent pouvait lancer deux
+  `send_json` simultanés sur le même socket (interdit par Starlette). Ajout d'un
+  **lock par room** dans le ConnectionManager (nettoyé quand la room se vide).
+- **Nettoyage** : requête dataset dupliquée supprimée dans `create_run`.
+
+Vérifié : `compileall` backend OK, `tsc --noEmit` frontend OK.
+
+## 10. Pistes restantes (suggestions)
 
 - **Multi-GPU réel** : sharding / `device_map="balanced"` (accelerate) au lieu de
   n'utiliser que le GPU primaire ; agréger la VRAM pour les gros modèles.

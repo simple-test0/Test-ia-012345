@@ -271,9 +271,7 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
 
     dataset_path = None
     if req.dataset_id:
-        result = await db.execute(select(Dataset).where(Dataset.id == req.dataset_id))  # type: ignore
-        from models.dataset import Dataset as DatasetModel
-        result = await db.execute(select(DatasetModel).where(DatasetModel.id == req.dataset_id))
+        result = await db.execute(select(Dataset).where(Dataset.id == req.dataset_id))
         ds = result.scalar_one_or_none()
         if ds and ds.local_path:
             dataset_path = ds.local_path

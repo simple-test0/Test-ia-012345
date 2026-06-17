@@ -81,14 +81,17 @@ const STATUS_COLORS: Record<ImageJob['status'], string> = {
 interface ActiveJobProgressProps {
   jobId: string
   onCompleted: (images: string[]) => void
+  onFailed: () => void
 }
 
-function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
+function ActiveJobProgress({ jobId, onCompleted, onFailed }: ActiveJobProgressProps) {
   const [step, setStep] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
   const [preview, setPreview] = useState<string | null>(null)
   const onCompletedRef = useRef(onCompleted)
   onCompletedRef.current = onCompleted
+  const onFailedRef = useRef(onFailed)
+  onFailedRef.current = onFailed
 
   useWebSocket(`${WS_BASE}/ws/image/${jobId}`, {
     onMessage: (raw) => {
@@ -99,6 +102,8 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
         if (evt.preview) setPreview(evt.preview)
       } else if (evt.type === 'completed') {
         onCompletedRef.current((evt.images_b64 || []).filter((x): x is string => Boolean(x)))
+      } else if (evt.type === 'error') {
+        onFailedRef.current()
       }
     },
   })
@@ -133,9 +138,11 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
 interface JobCardProps {
   job: ImageJob
   onJobCompleted: (jobId: string, images: string[]) => void
+  onJobFailed: (jobId: string) => void
 }
 
-function JobCard({ job, onJobCompleted }: JobCardProps) {
+function JobCard({ job, onJobCompleted, onJobFailed }: JobCardProps) {
+  const isActive = job.status === 'running' || job.status === 'queued'
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
@@ -145,10 +152,11 @@ function JobCard({ job, onJobCompleted }: JobCardProps) {
         </span>
       </div>
 
-      {job.status === 'running' && (
+      {isActive && (
         <ActiveJobProgress
           jobId={job.job_id}
           onCompleted={(images) => onJobCompleted(job.job_id, images)}
+          onFailed={() => onJobFailed(job.job_id)}
         />
       )}
 
@@ -206,9 +214,6 @@ export default function ImageGenerationPage() {
   const [jobs, setJobs] = useState<ImageJob[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Active job WS (for queue status on the newly submitted job)
-  const [activeJobId, setActiveJobId] = useState<string | null>(null)
-
   // Hardware-aware caps (so small configs aren't offered resolutions that OOM).
   const { recommendations } = useHardwareInfo(10000)
   const maxRes = (() => {
@@ -217,17 +222,6 @@ export default function ImageGenerationPage() {
     return mr && mr.length === 2 ? Math.max(mr[0], mr[1]) : 1024
   })()
   const pixelSizes = ALL_PIXEL_SIZES.filter((s) => s <= maxRes)
-
-  useWebSocket(activeJobId ? `${WS_BASE}/ws/image/${activeJobId}` : null, {
-    onMessage: (raw) => {
-      const evt = raw as WsEvent
-      if (evt.type === 'completed' || evt.type === 'error') {
-        setQueuePosition(null)
-        setActiveJobId(null)
-        if (evt.type === 'error') setError(evt.message || 'Generation failed')
-      }
-    },
-  })
 
   // Apply a model's recommended defaults (steps / CFG / resolution).
   const applyModelDefaults = (m: ImageModel) => {
@@ -253,10 +247,12 @@ export default function ImageGenerationPage() {
       .catch(() => setError('Failed to load models'))
   }, [])
 
-  // Fetch job history
+  // Fetch job history. The list endpoint returns `id`; normalise to `job_id`
+  // (the field the POST response and the rest of this page use).
   useEffect(() => {
     getJobs()
-      .then((data: ImageJob[]) => setJobs(data))
+      .then((data: Array<ImageJob & { id?: string }>) =>
+        setJobs(data.map((j) => ({ ...j, job_id: j.job_id ?? j.id ?? '' }))))
       .catch(() => {})
   }, [])
 
@@ -289,7 +285,6 @@ export default function ImageGenerationPage() {
         queue_position: result.queue_position,
       }
       setJobs((prev) => [newJob, ...prev])
-      setActiveJobId(result.job_id)
       if (typeof result.queue_size === 'number') setQueuePosition(result.queue_size)
     } catch (e: unknown) {
       const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -300,9 +295,20 @@ export default function ImageGenerationPage() {
   }
 
   const handleJobCompleted = (jobId: string, images: string[]) => {
+    setQueuePosition(null)
     setJobs((prev) =>
       prev.map((j) =>
         j.job_id === jobId ? { ...j, status: 'completed' as const, images } : j
+      )
+    )
+  }
+
+  const handleJobFailed = (jobId: string) => {
+    setQueuePosition(null)
+    setError('Generation failed. Please try again.')
+    setJobs((prev) =>
+      prev.map((j) =>
+        j.job_id === jobId ? { ...j, status: 'failed' as const } : j
       )
     )
   }
@@ -540,7 +546,7 @@ export default function ImageGenerationPage() {
         ) : (
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
             {jobs.map((job) => (
-              <JobCard key={job.job_id} job={job} onJobCompleted={handleJobCompleted} />
+              <JobCard key={job.job_id} job={job} onJobCompleted={handleJobCompleted} onJobFailed={handleJobFailed} />
             ))}
           </div>
         )}
