@@ -71,6 +71,26 @@ async def create_session(req: CreateSessionRequest, db: AsyncSession = Depends(g
     return {"id": session.id, "name": session.name}
 
 
+class RenameSessionRequest(BaseModel):
+    name: str
+
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(
+    session_id: str, req: RenameSessionRequest, db: AsyncSession = Depends(get_db)
+):
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name cannot be empty")
+    result = await db.execute(select(AgentSession).where(AgentSession.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.name = name
+    await db.commit()
+    return {"id": session.id, "name": session.name}
+
+
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(AgentSession).where(AgentSession.id == session_id))

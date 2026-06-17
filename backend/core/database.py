@@ -35,9 +35,14 @@ async def get_db():
         try:
             yield session
             await session.commit()
-        except Exception:
-            logger.warning("DB session rolled back due to error", exc_info=True)
+        except Exception as exc:
             await session.rollback()
+            # HTTPException is normal request control flow (404/422/…), not a DB
+            # failure — don't spam the log with a traceback for it.
+            from starlette.exceptions import HTTPException
+
+            if not isinstance(exc, HTTPException):
+                logger.warning("DB session rolled back due to error", exc_info=True)
             raise
         finally:
             await session.close()
