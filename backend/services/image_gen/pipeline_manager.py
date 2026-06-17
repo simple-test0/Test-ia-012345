@@ -136,3 +136,9 @@ def image_to_base64(img: Image.Image, format: str = "JPEG") -> str:
     buf = io.BytesIO()
     img.save(buf, format=format, quality=85)
     return base64.b64encode(buf.getvalue()).decode()
+
+
+def image_to_data_url(img: Image.Image, format: str = "JPEG") -> str:
+    """Return a ready-to-render `data:` URL (unified image transport)."""
+    mime = "jpeg" if format.upper() == "JPEG" else format.lower()
+    return f"data:image/{mime};base64,{image_to_base64(img, format)}"

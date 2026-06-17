@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Search, Download, Lock, Loader2, X, Heart, ArrowDownToLine } from 'lucide-react'
 import { searchHFModels, downloadHFModel } from '../../api/image'
+import { toast } from '../ui/toast'
 
 interface HFResult {
   repo_id: string
@@ -59,6 +60,7 @@ export default function HFModelBrowser({ open, onClose, onDownloadStarted }: HFM
     try {
       const res = await downloadHFModel({ repo_id: r.repo_id })
       onDownloadStarted(res.id)
+      toast.info(`Téléchargement de ${r.name} démarré…`)
     } catch {
       setError(`Échec du téléchargement de ${r.repo_id}`)
       setDownloading((prev) => {

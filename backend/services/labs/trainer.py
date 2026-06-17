@@ -54,19 +54,16 @@ def _training_process(
         using_dummy = False
         dummy_reason = ""
         if dataset_path and Path(dataset_path).exists():
-            # Attempt to load a HF dataset saved as arrow files
+            # Attempt to load a HF dataset saved as arrow files. Best-effort:
+            # supports common image/text classification column layouts.
             try:
                 from datasets import load_from_disk
                 hf_ds = load_from_disk(dataset_path)
-                # Wrap into tensors (basic classification support)
-                # This is a best-effort; real use cases need task-specific handling
-                import numpy as np
-                xs = torch.FloatTensor(np.array(hf_ds["train"]["pixel_values"]))
-                ys = torch.LongTensor(np.array(hf_ds["train"]["label"]))
-                dataset = TensorDataset(xs, ys)
+                split = hf_ds["train"] if "train" in hf_ds else hf_ds[list(hf_ds.keys())[0]]
+                dataset = _tensor_dataset_from_hf(split, arch_config)
             except Exception as exc:
                 using_dummy = True
-                dummy_reason = f"dataset not parseable (expects 'pixel_values'/'label'): {exc}"
+                dummy_reason = f"dataset not parseable: {exc}"
                 dataset = _make_dummy_dataset(arch_config, num_classes, size=1000)
         else:
             using_dummy = True
@@ -240,6 +237,57 @@ def _training_process(
     except Exception as exc:
         import traceback
         emit({"type": "error", "message": str(exc), "traceback": traceback.format_exc()})
+
+
+def _tensor_dataset_from_hf(split, arch_config):
+    """Best-effort conversion of a HF dataset split to a TensorDataset.
+
+    Supports common column names for features (pixel_values/image/img/text/
+    input_ids) and labels (label/labels/target), including PIL image columns.
+    """
+    import numpy as np
+    import torch
+    from torch.utils.data import TensorDataset
+
+    cols = set(split.column_names)
+    label_col = next((c for c in ("label", "labels", "target") if c in cols), None)
+    feat_col = next(
+        (c for c in ("pixel_values", "image", "img", "input_ids", "text") if c in cols),
+        None,
+    )
+    if label_col is None or feat_col is None:
+        raise ValueError(
+            f"could not find feature/label columns in {sorted(cols)} "
+            "(expected one of pixel_values/image/img/input_ids/text + label/labels/target)"
+        )
+
+    ys = torch.LongTensor(np.array(split[label_col]))
+
+    raw = split[feat_col]
+    if feat_col in ("input_ids",):
+        xs = torch.LongTensor(np.array(raw))
+    elif feat_col == "text":
+        # Hash tokens into a fixed vocab — enough to exercise text architectures.
+        seq_len = arch_config.get("max_seq_len", 128)
+        vocab = arch_config.get("vocab_size", 10000)
+        rows = []
+        for t in raw:
+            toks = [(hash(w) % vocab) for w in str(t).split()[:seq_len]]
+            toks += [0] * (seq_len - len(toks))
+            rows.append(toks)
+        xs = torch.LongTensor(rows)
+    else:
+        # Image-like: PIL images or arrays. Normalize to float CHW tensors.
+        arr = np.array([np.asarray(im, dtype=np.float32) for im in raw])
+        if arr.ndim == 3:  # (N, H, W) grayscale -> add channel
+            arr = arr[:, None, :, :]
+        elif arr.ndim == 4 and arr.shape[-1] in (1, 3, 4):  # NHWC -> NCHW
+            arr = arr.transpose(0, 3, 1, 2)
+        if arr.max() > 1.5:
+            arr = arr / 255.0
+        xs = torch.FloatTensor(arr)
+
+    return TensorDataset(xs, ys)
 
 
 def _make_dummy_dataset(arch_config, num_classes, size=1000):

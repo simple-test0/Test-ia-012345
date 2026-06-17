@@ -8,8 +8,8 @@ from core.config import settings
 from services.agent.tool_registry import register_tool
 
 
-def _build_preexec(max_memory_mb: int):
-    """Return a preexec_fn that applies memory/file-size limits (POSIX only)."""
+def _build_preexec(max_memory_mb: int, cpu_seconds: int):
+    """Return a preexec_fn applying memory/CPU/file-size limits (POSIX only)."""
     try:
         import resource
     except ImportError:
@@ -19,6 +19,11 @@ def _build_preexec(max_memory_mb: int):
         mem_bytes = max_memory_mb * 1024 * 1024
         try:
             resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+        except (ValueError, OSError):
+            pass
+        try:
+            # Hard CPU cap (defends against busy loops that ignore the wall timeout).
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
         except (ValueError, OSError):
             pass
         try:
@@ -68,7 +73,7 @@ def code_executor(code: str, timeout: int = None) -> str:
             capture_output=True,
             text=True,
             timeout=timeout,
-            preexec_fn=_build_preexec(settings.code_executor_max_memory_mb),
+            preexec_fn=_build_preexec(settings.code_executor_max_memory_mb, timeout + 2),
         )
         output = result.stdout
         if result.stderr:

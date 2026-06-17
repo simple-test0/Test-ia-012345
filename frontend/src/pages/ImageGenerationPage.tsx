@@ -4,6 +4,7 @@ import { generateImage, getModels, getJobs, getHFModelStatus } from '../api/imag
 import { useWebSocket } from '../hooks/useWebSocket'
 import { wsUrl } from '../api/client'
 import HFModelBrowser from '../components/image/HFModelBrowser'
+import { toast } from '../components/ui/toast'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ interface GenerateParams {
   height: number
   seed: number
   num_images: number
+  lora?: string
 }
 
 interface WsStepEvent {
@@ -116,7 +118,7 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
       </div>
       {preview && (
         <img
-          src={`data:image/png;base64,${preview}`}
+          src={preview}
           alt="Latent preview"
           className="mt-2 w-full rounded-lg object-contain opacity-80"
         />
@@ -154,7 +156,7 @@ function JobCard({ job, onJobCompleted }: JobCardProps) {
           {job.images.map((img, i) => (
             <img
               key={i}
-              src={`data:image/png;base64,${img}`}
+              src={img}
               alt={`Generated ${i + 1}`}
               className="w-full rounded-lg object-cover aspect-square"
             />
@@ -196,6 +198,7 @@ export default function ImageGenerationPage() {
   const [height, setHeight] = useState(512)
   const [seed, setSeed] = useState(-1)
   const [numImages, setNumImages] = useState(1)
+  const [lora, setLora] = useState('')
 
   // UI state
   const [loading, setLoading] = useState(false)
@@ -254,13 +257,16 @@ export default function ImageGenerationPage() {
                 return next
               })
               refreshModels()
+              toast.success('Modèle téléchargé et prêt à l\'emploi.')
             } else if (m.status === 'error') {
               setDownloadingModels((prev) => {
                 const next = { ...prev }
                 delete next[id]
                 return next
               })
-              setError(m.error_message || 'Le téléchargement du modèle a échoué.')
+              const msg = m.error_message || 'Le téléchargement du modèle a échoué.'
+              setError(msg)
+              toast.error(msg)
             } else {
               setDownloadingModels((prev) => ({ ...prev, [id]: m.progress ?? 0 }))
             }
@@ -301,6 +307,7 @@ export default function ImageGenerationPage() {
       height,
       seed,
       num_images: numImages,
+      lora: lora.trim() || undefined,
     }
 
     try {
@@ -338,7 +345,7 @@ export default function ImageGenerationPage() {
           <label className="text-xs font-medium text-gray-400">Prompt</label>
           <textarea
             className="rounded-xl bg-gray-900 border border-gray-800 p-3 text-sm text-gray-100
-              resize-none h-28 focus:outline-none focus:border-blue-500 transition-colors placeholder-gray-600"
+              resize-none h-28 focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
             placeholder="Describe the image you want to generate..."
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
@@ -350,7 +357,7 @@ export default function ImageGenerationPage() {
           <label className="text-xs font-medium text-gray-400">Negative Prompt</label>
           <textarea
             className="rounded-xl bg-gray-900 border border-gray-800 p-3 text-sm text-gray-100
-              resize-none h-16 focus:outline-none focus:border-blue-500 transition-colors placeholder-gray-600"
+              resize-none h-16 focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
             placeholder="Things to avoid..."
             value={negativePrompt}
             onChange={(e) => setNegativePrompt(e.target.value)}
@@ -537,6 +544,20 @@ export default function ImageGenerationPage() {
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-gray-500" />
           </div>
+        </div>
+
+        {/* LoRA */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-gray-400">
+            LoRA <span className="text-gray-600">(HF repo, optionnel)</span>
+          </label>
+          <input
+            className="rounded-xl bg-gray-900 border border-gray-800 p-2.5 text-sm text-gray-100
+              focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
+            placeholder="ex. ostris/super-cereal-sdxl-lora"
+            value={lora}
+            onChange={(e) => setLora(e.target.value)}
+          />
         </div>
 
         {/* Error */}

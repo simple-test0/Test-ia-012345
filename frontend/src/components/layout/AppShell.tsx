@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import HardwareBadge from './HardwareBadge'
+import { Toaster } from '../ui/toast'
 
 export default function AppShell() {
   return (
@@ -15,6 +16,7 @@ export default function AppShell() {
           <Outlet />
         </main>
       </div>
+      <Toaster />
     </div>
   )
 }

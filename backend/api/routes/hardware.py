@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from hardware.detector import detect_hardware
+from hardware.detector import detect_hardware_cached
 from hardware.recommender import recommend
 
 router = APIRouter(prefix="/hardware", tags=["hardware"])
@@ -8,7 +8,7 @@ router = APIRouter(prefix="/hardware", tags=["hardware"])
 
 @router.get("/info")
 async def hardware_info():
-    hw = detect_hardware()
+    hw = detect_hardware_cached()
     return {
         "cuda_available": hw.cuda_available,
         "platform": hw.platform,
@@ -41,7 +41,7 @@ async def hardware_info():
 
 @router.get("/recommendations")
 async def hardware_recommendations():
-    hw = detect_hardware()
+    hw = detect_hardware_cached()
     rec = recommend(hw)
     return {
         "tier_label": rec.tier_label,

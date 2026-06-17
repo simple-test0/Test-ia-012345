@@ -13,6 +13,7 @@ export const generateImage = (params: {
   seed: number
   sampler: string
   num_images: number
+  lora?: string
 }) => api.post('/image/generate', params).then(r => r.data)
 
 export const getJobs = (limit = 20, offset = 0) =>

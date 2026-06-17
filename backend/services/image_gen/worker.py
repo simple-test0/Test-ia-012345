@@ -9,7 +9,7 @@ from typing import Optional
 
 from core.config import settings
 from api.websockets.manager import ws_manager
-from services.image_gen.pipeline_manager import apply_sampler, pipeline_manager, image_to_base64
+from services.image_gen.pipeline_manager import apply_sampler, pipeline_manager, image_to_data_url
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,13 @@ class GenerationWorker:
             pipe = await pipeline_manager.get_pipeline(model_id, repo_id)
             if job.get("sampler"):
                 apply_sampler(pipe, job["sampler"])
+            lora = job.get("lora")
+            if lora and hasattr(pipe, "load_lora_weights"):
+                try:
+                    pipe.load_lora_weights(lora)
+                    logger.info(f"Loaded LoRA {lora}")
+                except Exception as exc:
+                    logger.warning(f"Could not load LoRA {lora}: {exc}")
             loop = self._loop
             step_data = {"current": 0}
 
@@ -81,7 +88,7 @@ class GenerationWorker:
                             import numpy as np
                             img = Image.fromarray((decoded[0] * 255).astype(np.uint8))
                             img.thumbnail((256, 256))
-                            preview_b64 = image_to_base64(img)
+                            preview_b64 = image_to_data_url(img, "JPEG")
                     except Exception as exc:
                         logger.debug(f"Step preview decode failed: {exc}")
 
@@ -134,6 +141,14 @@ class GenerationWorker:
         except Exception as exc:
             error_msg = str(exc)
             logger.exception(f"Generation failed for job {job_id}")
+        finally:
+            # Pipelines are cached/reused — remove any LoRA so it doesn't leak
+            # into the next job.
+            if job.get("lora"):
+                try:
+                    pipe.unload_lora_weights()
+                except Exception:
+                    pass
 
         duration_ms = int(time.time() * 1000) - start_ms
         status = "completed" if not error_msg else "failed"
@@ -144,7 +159,7 @@ class GenerationWorker:
             try:
                 from PIL import Image as PILImage
                 img = PILImage.open(p)
-                image_b64s.append(image_to_base64(img, "PNG"))
+                image_b64s.append(image_to_data_url(img, "PNG"))
             except Exception:
                 image_b64s.append(None)
 

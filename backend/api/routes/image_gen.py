@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import random
 import shutil
 import uuid
@@ -36,6 +35,8 @@ class GenerateRequest(BaseModel):
     seed: int = Field(-1)
     sampler: str = "DPM++ 2M"
     num_images: int = Field(1, ge=1, le=4)
+    # Optional LoRA adapter (HF repo id), applied on top of the base model.
+    lora: Optional[str] = None
 
 
 class HFModelDownloadRequest(BaseModel):
@@ -160,6 +161,7 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "seed": seed,
         "num_images": req.num_images,
         "sampler": req.sampler,
+        "lora": req.lora,
     }
     await generation_queue.put(queue_job)
 
@@ -244,14 +246,26 @@ async def hf_model_delete(model_id: str, db: AsyncSession = Depends(get_db)):
     return {"deleted": model_id}
 
 
-def _job_images_b64(output_paths) -> list:
-    """Read saved PNG files and return them as base64 strings (frontend renders
-    them with a data:image/png;base64 prefix)."""
+def _job_images(output_paths, thumbnail: bool = False) -> list:
+    """Return saved images as ready-to-render `data:` URLs.
+
+    thumbnail=True downsizes to small JPEGs (used for the history list to keep
+    payloads light); otherwise full-resolution PNGs are returned.
+    """
+    from PIL import Image as PILImage
+
+    from services.image_gen.pipeline_manager import image_to_data_url
+
     images = []
     for p in output_paths or []:
         try:
-            data = Path(p).read_bytes()
-            images.append(base64.b64encode(data).decode())
+            if thumbnail:
+                img = PILImage.open(p)
+                img.thumbnail((384, 384))
+                images.append(image_to_data_url(img, "JPEG"))
+            else:
+                img = PILImage.open(p)
+                images.append(image_to_data_url(img, "PNG"))
         except Exception:
             pass
     return images
@@ -279,7 +293,7 @@ async def list_jobs(
             "steps": j.steps,
             "seed": j.seed,
             "output_paths": j.output_paths,
-            "images": _job_images_b64(j.output_paths),
+            "images": _job_images(j.output_paths, thumbnail=True),
             "duration_ms": j.duration_ms,
             "created_at": j.created_at.isoformat() if j.created_at else None,
         }
@@ -308,7 +322,7 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "sampler": job.sampler,
         "num_images": job.num_images,
         "output_paths": job.output_paths,
-        "images": _job_images_b64(job.output_paths),
+        "images": _job_images(job.output_paths),
         "error_message": job.error_message,
         "duration_ms": job.duration_ms,
         "created_at": job.created_at.isoformat() if job.created_at else None,

@@ -3,33 +3,33 @@
 ## ✅ Done
 
 ### Sécurité
-- [x] **`code_executor`** désactivé par défaut (`ENABLE_CODE_EXECUTOR`), exécution isolée
-      (`python -I`), timeout borné et limites mémoire/taille de fichier (POSIX).
-- [x] **`calculator`** : `eval` remplacé par un évaluateur AST sûr (noms autorisés, garde
-      anti-DoS sur les exposants).
-- [x] **Auth / CSRF** : token partagé optionnel (`API_TOKEN`) sur REST (`X-API-Token`) et
-      WebSocket (`?token=`) ; côté front via `VITE_API_TOKEN`. Header custom ⇒ non exploitable en CSRF.
+- [x] `code_executor` désactivé par défaut, `python -I`, timeout borné, limites
+      mémoire **+ CPU** et taille de fichier (rlimits POSIX).
+- [x] `calculator` : évaluateur AST sûr (anti-DoS exposant).
+- [x] Auth token optionnelle (`API_TOKEN`) sur REST + WebSocket ; front via `VITE_API_TOKEN`.
 
 ### Fonctionnel
-- [x] **Sampler** câblé : mapping sampler → scheduler diffusers (DPM++ 2M, Euler, Euler a, DDIM, LMS).
-- [x] **Labs / données aléatoires** : événement `warning` explicite émis et affiché quand
-      l'entraînement retombe sur des données générées.
-- [x] **Tool-calling Ollama natif** : le planner utilise l'API `tools` d'Ollama (repli regex conservé).
-- [x] **Pré-check espace disque** avant download HF + taille estimée + **progression %** (polling).
+- [x] Sampler câblé → scheduler diffusers.
+- [x] Tool-calling Ollama natif (repli regex).
+- [x] Labs : warning « données aléatoires » + **support multi-formats de datasets**
+      (pixel_values/image/img/input_ids/text + label/labels/target, images PIL → tenseurs).
+- [x] Download HF : pré-check disque, taille estimée, **progression % byte-accurate**.
+- [x] **LoRA** : adaptateur optionnel appliqué au pipeline (déchargé après chaque job).
 
-### Qualité projet
-- [x] **README** complet.
-- [x] **Tests** backend (pytest, sans torch) + **CI** GitHub Actions (backend + build frontend).
-- [x] **Dockerfile** backend & frontend + **docker-compose** (backend, frontend, Ollama).
-- [x] **`start.sh`** : mode prod (`MODE=prod`, sans `--reload`) + warning si Ollama injoignable.
-- [x] **Auto-migration légère** SQLite (ajout de colonnes manquantes au démarrage).
-- [x] Remplacement des `except: pass` muets (preview VAE, GPUtil) par des logs debug.
+### Qualité / Optimisation
+- [x] README, tests pytest (24, sans torch) + marqueur `heavy` pour l'e2e, CI GitHub Actions.
+- [x] Dockerfile backend & frontend + docker-compose (+ Ollama, proxy nginx).
+- [x] `start.sh` mode prod + warning Ollama.
+- [x] **Migrations DB via Alembic** (migration initiale générée + vérifiée) en plus de
+      l'auto-migration légère de dev.
+- [x] **Optimisations** : cache de détection hardware (TTL) + VRAM mémorisée (évite le
+      `psutil.cpu_percent` bloquant à chaque requête) ; transport image unifié en `data:` URLs
+      avec **vignettes JPEG** pour l'historique (payloads allégés).
+- [x] Esthétique : système de **toasts** global, couleurs de focus unifiées (violet),
+      champ LoRA dans l'UI.
+- [x] Remplacement des `except: pass` muets par des logs debug.
 
-## ⏭️ Restant (améliorations futures)
-- [ ] Migrations DB robustes via Alembic (l'auto-migration actuelle est minimaliste, SQLite only).
-- [ ] Barre de progression de download exacte via un vrai bridge `tqdm` (actuellement estimée par
-      la taille du dossier vs métadonnées HF).
-- [ ] Labs : support de davantage de formats de datasets (au-delà de `pixel_values`/`label`).
-- [ ] Sandboxing renforcé de `code_executor` (conteneur / `nsjail`) au-delà des rlimits POSIX.
-- [ ] Tests end-to-end incluant torch/diffusers (lourds — exclus de la CI légère).
-- [ ] Image generation : ControlNet / img2img / LoRA.
+## ⏭️ Restant (nécessite un GPU pour être validé)
+- [ ] Génération **img2img** (upload d'image source) — back + UI à valider sur GPU.
+- [ ] **ControlNet** (pose/depth/canny) — pipeline + UI dédiés.
+- [ ] Tests e2e exécutant réellement torch/diffusers (marqueur `heavy` déjà en place).

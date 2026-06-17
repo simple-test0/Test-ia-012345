@@ -88,7 +88,19 @@ cd backend && pip install -r requirements-dev.txt && pytest      # backend unit 
 cd frontend && npm run build                                     # type-check + build
 ```
 
-CI runs both on every push/PR (`.github/workflows/ci.yml`).
+CI runs both on every push/PR (`.github/workflows/ci.yml`). Heavy tests that need
+torch/diffusers are marked `heavy` and skipped in CI — run locally with `pytest -m heavy`.
+
+## Database migrations
+
+The app auto-creates tables on startup (plus a lightweight column auto-migration) for a
+zero-config dev experience. For production, use Alembic:
+
+```bash
+cd backend
+alembic upgrade head            # apply migrations
+alembic revision --autogenerate -m "describe change"   # after model changes
+```
 
 ## Docker
 
