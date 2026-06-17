@@ -28,6 +28,27 @@ That's it. The installer auto-detects your GPU and writes an optimised
 > 🔒 For gated image models (FLUX.1-dev, SD3.5), add `HUGGINGFACE_TOKEN=hf_...`
 > to `backend/.env`.
 
+## Project structure
+
+```
+.
+├── install.sh / install.bat   # one-click setup (deps + GPU detection + tuning)
+├── start.sh   / start.bat     # launch backend + frontend
+├── scripts/optimize.py        # hardware detection → tuned backend/.env
+├── backend/                   # FastAPI app
+│   ├── main.py                # app entry (routers, lifespan, startup)
+│   ├── api/routes/            # REST: hardware · image · agent · labs
+│   ├── api/websockets/        # live streams: image · agent · training
+│   ├── services/              # image_gen · agent · labs (the real work)
+│   ├── hardware/              # accelerator detection + recommendations
+│   ├── models/                # database models
+│   └── requirements.txt
+└── frontend/                  # React + Vite UI
+    └── src/pages/             # ImageGeneration · Agent · Labs
+```
+
+See **[IMPROVEMENTS.md](IMPROVEMENTS.md)** for the full changelog and design notes.
+
 ## Re-optimise after a hardware change
 
 ```bash
