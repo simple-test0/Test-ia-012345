@@ -2,15 +2,13 @@ import asyncio
 import logging
 import random
 import time
-import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-from core.config import settings
 from api.websockets.manager import ws_manager
-from services.image_gen.model_registry import get_model
-from services.image_gen.pipeline_manager import pipeline_manager, image_to_base64
+from core.config import settings
+
+from services.image_gen.pipeline_manager import image_to_base64, pipeline_manager
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +88,8 @@ class GenerationWorker:
                             )[0]
                             decoded = (decoded / 2 + 0.5).clamp(0, 1)
                             decoded = decoded.cpu().permute(0, 2, 3, 1).float().numpy()
-                            from PIL import Image
                             import numpy as np
+                            from PIL import Image
                             img = Image.fromarray((decoded[0] * 255).astype(np.uint8))
                             img.thumbnail((256, 256))
                             preview_b64 = image_to_base64(img)

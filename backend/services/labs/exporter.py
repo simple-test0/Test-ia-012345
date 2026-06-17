@@ -17,6 +17,7 @@ async def export_model(
 
     def _export() -> str:
         import torch
+
         from services.labs.architecture_registry import get_arch
 
         spec = get_arch(arch_id)

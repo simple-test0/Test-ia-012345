@@ -1,11 +1,10 @@
 """Training worker that runs in a separate process to avoid GIL contention."""
 import atexit
+import contextlib
 import logging
 import math
 import multiprocessing as mp
 import os
-import signal
-import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -30,10 +29,8 @@ def _training_process(
     from torch.utils.data import DataLoader, TensorDataset, random_split
 
     def emit(event: dict):
-        try:
+        with contextlib.suppress(Exception):
             metric_queue.put_nowait(event)
-        except Exception:
-            pass
 
     emit({"type": "status", "status": "running"})
 

@@ -16,7 +16,7 @@ Design goals
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
 from .detector import (
@@ -410,7 +410,7 @@ def _recommend_training(budget_mb, tier_budget, cpu_cores, supports_amp, support
         pin_memory=is_discrete,
         notes=(
             f"Effective batch size: {batch * grad_accum} "
-            f"({batch} per step × {grad_accum} grad-accum). "
+            f"({batch} per step x {grad_accum} grad-accum). "
             f"Max model size ≈ {max_params // 1_000_000}M params at {precision or 'fp32'} precision."
         ),
     )

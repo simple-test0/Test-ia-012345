@@ -91,7 +91,7 @@ def main() -> int:
     print(f"  Accelerator : {rec.backend.upper()}"
           + (f" · {gpu.name}" if gpu else " (no GPU detected)"))
     print(f"  VRAM        : {_human_gb(rec.vram_mb)}"
-          + (f"  (reported by driver)" if rec.vram_mb else ""))
+          + ("  (reported by driver)" if rec.vram_mb else ""))
     print(f"  System RAM  : {_human_gb(hw.ram_total_mb)}")
     print(f"  Tier        : {rec.tier_label}")
     print("  ---")

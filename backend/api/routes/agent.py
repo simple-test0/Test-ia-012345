@@ -1,15 +1,13 @@
 import uuid
-from datetime import datetime
-
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException
 from models.agent_session import AgentSession
+from pydantic import BaseModel
 from services.agent.ollama_client import ollama_client
 from services.agent.tool_registry import list_tools
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 

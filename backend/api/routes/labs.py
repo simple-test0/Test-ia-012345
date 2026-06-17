@@ -4,24 +4,23 @@ import queue as _queue
 import threading
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.config import settings
+from core.database import AsyncSessionLocal, get_db
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from hardware.detector import detect_hardware
+from models.dataset import Dataset
+from models.training_run import TrainingRun
 from pydantic import BaseModel
+from services.labs.architecture_registry import get_arch, list_archs
+from services.labs.exporter import export_model
+from services.labs.trainer import training_manager
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.websockets.manager import ws_manager
-from core.config import settings
-from core.database import AsyncSessionLocal, get_db
-from hardware.detector import detect_hardware
-from models.dataset import Dataset
-from models.training_run import TrainingRun
-from services.labs.architecture_registry import ARCHITECTURE_REGISTRY, get_arch, list_archs
-from services.labs.trainer import training_manager
-from services.labs.exporter import export_model
 
 logger = logging.getLogger(__name__)
 

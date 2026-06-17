@@ -1,5 +1,4 @@
 from fastapi import APIRouter
-
 from hardware.detector import detect_hardware
 from hardware.recommender import recommend
 

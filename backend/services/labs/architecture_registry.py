@@ -2,10 +2,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from services.labs.architectures.cnn import build_cnn
-from services.labs.architectures.rnn import build_rnn, build_lstm, build_gru
+from services.labs.architectures.pretrained import BACKBONES, build_pretrained
+from services.labs.architectures.rnn import build_gru, build_lstm, build_rnn
 from services.labs.architectures.transformer import build_transformer
 from services.labs.architectures.vit import build_vit
-from services.labs.architectures.pretrained import BACKBONES, build_pretrained
 
 
 @dataclass

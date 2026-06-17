@@ -20,7 +20,7 @@ def calculator(expression: str) -> str:
     allowed["round"] = round
     allowed["pow"] = pow
     try:
-        result = eval(expression, {"__builtins__": {}}, allowed)  # noqa: S307
+        result = eval(expression, {"__builtins__": {}}, allowed)
         return str(result)
     except Exception as exc:
         return f"Calculation error: {exc}"

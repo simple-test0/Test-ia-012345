@@ -1,4 +1,3 @@
-import math
 from typing import Any, Dict
 
 import torch
@@ -36,7 +35,7 @@ class TransformerLanguageModel(nn.Module):
         self.max_seq_len = max_seq_len
 
     def forward(self, x):
-        B, T = x.shape
+        _, T = x.shape
         positions = torch.arange(T, device=x.device).unsqueeze(0)
         emb = self.dropout(self.token_emb(x) + self.pos_emb(positions))
         out = self.transformer(emb)

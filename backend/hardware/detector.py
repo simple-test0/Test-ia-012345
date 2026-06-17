@@ -17,6 +17,7 @@ or partially-supported machines.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import platform
 import threading
@@ -332,10 +333,8 @@ def _detect_mps(info: HardwareInfo, torch) -> None:
         budget_mb = int(info.ram_total_mb * 0.7)
 
     used_mb = 0
-    try:
+    with contextlib.suppress(Exception):
         used_mb = int(torch.mps.current_allocated_memory() // (1024 ** 2))
-    except Exception:
-        pass
 
     info.gpus.append(
         GPUInfo(

@@ -1,17 +1,15 @@
 import random
 import uuid
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.database import get_db
-from models.image_job import ImageJob
-from services.image_gen.model_registry import MODEL_REGISTRY, get_model, get_compatible_models
+from fastapi import APIRouter, Depends, HTTPException, Request
 from hardware.detector import get_primary_vram_mb
+from models.image_job import ImageJob
+from pydantic import BaseModel, Field
+from services.image_gen.model_registry import MODEL_REGISTRY, get_compatible_models, get_model
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
 

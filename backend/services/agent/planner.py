@@ -2,10 +2,10 @@ import json
 import logging
 import re
 import uuid
-from typing import AsyncIterator, Callable, List, Optional
+from typing import Callable, List, Optional
 
 from services.agent.ollama_client import OllamaClient
-from services.agent.tool_registry import execute_tool, list_tools, tools_as_json_schema
+from services.agent.tool_registry import execute_tool, tools_as_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +57,9 @@ class ReactAgent:
         on_event: Optional[Callable[[dict], None]] = None,
     ) -> str:
         system_msg = {"role": "system", "content": self._build_system_prompt()}
-        history = [system_msg] + messages
+        history = [system_msg, *messages]
 
-        for iteration in range(self.max_iterations):
+        for _ in range(self.max_iterations):
             accumulated = ""
 
             def on_token(token: str):

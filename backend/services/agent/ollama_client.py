@@ -6,10 +6,9 @@ removes per-request overhead and avoids socket exhaustion under load.
 """
 import json
 import logging
-from typing import AsyncIterator, Callable, List, Optional
+from typing import Callable, List, Optional
 
 import httpx
-
 from core.config import settings
 
 logger = logging.getLogger(__name__)

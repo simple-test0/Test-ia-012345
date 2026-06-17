@@ -13,17 +13,13 @@ import logging
 from collections import OrderedDict
 from typing import Optional
 
-from PIL import Image
-
 from core.config import settings
 from hardware.detector import (
-    BACKEND_CPU,
-    BACKEND_CUDA,
-    BACKEND_MPS,
     detect_hardware,
     empty_accelerator_cache,
 )
 from hardware.recommender import recommend
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +85,7 @@ class PipelineManager:
     @staticmethod
     def _load_explicit(model_id: str, repo_id: str, dtype, token):
         import diffusers
+
         from services.image_gen.model_registry import get_model
 
         spec = get_model(model_id)

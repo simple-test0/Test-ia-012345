@@ -1,13 +1,12 @@
 import asyncio
 import logging
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager, suppress
 
 from core.config import ensure_dirs, settings
 from core.database import init_db
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,9 +18,9 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     # Import tools so they self-register
-    import services.agent.tools.web_search  # noqa: F401
-    import services.agent.tools.calculator  # noqa: F401
-    import services.agent.tools.code_executor  # noqa: F401
+    import services.agent.tools.calculator
+    import services.agent.tools.code_executor
+    import services.agent.tools.web_search
 
     # Generation queue + worker
     from services.image_gen.worker import GenerationWorker
@@ -57,10 +56,8 @@ async def lifespan(app: FastAPI):
     yield
 
     worker_task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await worker_task
-    except asyncio.CancelledError:
-        pass
 
     from services.image_gen.pipeline_manager import pipeline_manager
     await pipeline_manager.unload_all()
@@ -90,7 +87,7 @@ app.add_middleware(
 )
 
 # REST routes
-from api.routes import hardware, image_gen, agent, labs  # noqa: E402
+from api.routes import agent, hardware, image_gen, labs
 
 app.include_router(hardware.router, prefix="/api/v1")
 app.include_router(image_gen.router, prefix="/api/v1")
@@ -98,9 +95,9 @@ app.include_router(agent.router, prefix="/api/v1")
 app.include_router(labs.router, prefix="/api/v1")
 
 # WebSocket routes
-from api.websockets.image_ws import ws_router as image_ws  # noqa: E402
-from api.websockets.agent_ws import ws_router as agent_ws  # noqa: E402
-from api.websockets.training_ws import ws_router as training_ws  # noqa: E402
+from api.websockets.agent_ws import ws_router as agent_ws
+from api.websockets.image_ws import ws_router as image_ws
+from api.websockets.training_ws import ws_router as training_ws
 
 app.include_router(image_ws)
 app.include_router(agent_ws)
