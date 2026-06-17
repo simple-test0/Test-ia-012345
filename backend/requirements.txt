@@ -16,7 +16,6 @@ pydantic-settings==2.5.2
 # ML - Core (install with: pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121)
 torch==2.4.1+cu121
 torchvision==0.19.1+cu121
-torchaudio==0.19.1+cu121
 
 # Image Generation
 diffusers==0.30.3
@@ -27,6 +26,7 @@ xformers==0.0.28.post1
 
 # Agents / LLM
 httpx==0.27.2
+ddgs==9.14.4
 
 # Labs / Training
 datasets==3.0.1

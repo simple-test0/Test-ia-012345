@@ -42,15 +42,22 @@ class PipelineManager:
         import torch
         from diffusers import AutoPipelineForText2Image
 
+        from core.config import settings
+
         vram_mb = self._get_vram_mb()
         dtype = torch.float16 if vram_mb >= 4096 else torch.float32
 
         logger.info(f"Loading pipeline {model_id} ({repo_id}) dtype={dtype}")
 
+        # cache_dir keeps all weights under data/models/diffusion (curated models
+        # are downloaded on demand, HF-downloaded models are a cache hit).
+        # No `revision` -> always loads the latest `main`.
         pipe = AutoPipelineForText2Image.from_pretrained(
             repo_id,
             torch_dtype=dtype,
             use_safetensors=True,
+            cache_dir=str(settings.models_dir / "diffusion"),
+            token=settings.huggingface_token or None,
         )
 
         if vram_mb >= 6144:

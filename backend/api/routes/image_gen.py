@@ -1,5 +1,8 @@
+import asyncio
 import random
+import shutil
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -7,9 +10,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_db
+from core.database import AsyncSessionLocal, get_db
+from models.diffusion_model import DiffusionModel
 from models.image_job import ImageJob
-from services.image_gen.model_registry import MODEL_REGISTRY, get_model, get_compatible_models
+from services.image_gen.hf_connector import download_hf_model, search_hf_models
+from services.image_gen.model_registry import (
+    curated_models,
+    get_compatible_models,
+    resolve_model,
+)
 from hardware.detector import get_primary_vram_mb
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
@@ -28,11 +37,40 @@ class GenerateRequest(BaseModel):
     num_images: int = Field(1, ge=1, le=4)
 
 
+class HFModelDownloadRequest(BaseModel):
+    repo_id: str
+    name: Optional[str] = None
+
+
+def _downloaded_model_dict(m: DiffusionModel, vram_mb: int) -> dict:
+    return {
+        "id": m.id,
+        "name": m.name,
+        "description": "",
+        "min_vram_mb": m.min_vram_mb or 0,
+        "recommended_steps": m.recommended_steps or 25,
+        "default_cfg": m.default_cfg or 7.5,
+        "default_width": m.default_width or 512,
+        "default_height": m.default_height or 512,
+        "tags": m.tags or [],
+        "compatible": (m.min_vram_mb or 0) <= vram_mb,
+        "source": "downloaded",
+        "recommended": False,
+        "status": m.status,
+        "repo_id": m.repo_id,
+        "gated": m.gated,
+        "size_bytes": m.size_bytes,
+        "error_message": m.error_message,
+    }
+
+
 @router.get("/models")
-async def list_models():
+async def list_models(db: AsyncSession = Depends(get_db)):
     vram_mb = get_primary_vram_mb()
     compatible = {m.id for m in get_compatible_models(vram_mb)}
-    return [
+
+    # Curated (recommended) models first.
+    models = [
         {
             "id": m.id,
             "name": m.name,
@@ -44,15 +82,39 @@ async def list_models():
             "default_height": m.default_height,
             "tags": m.tags,
             "compatible": m.id in compatible,
+            "source": "curated",
+            "recommended": True,
+            "status": "ready",
+            "repo_id": m.repo_id,
+            "gated": m.gated,
         }
-        for m in MODEL_REGISTRY
+        for m in curated_models()
     ]
+
+    # Then user-downloaded models.
+    result = await db.execute(
+        select(DiffusionModel).order_by(DiffusionModel.created_at.desc())
+    )
+    for m in result.scalars().all():
+        models.append(_downloaded_model_dict(m, vram_mb))
+
+    return models
 
 
 @router.post("/generate")
 async def generate(req: GenerateRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    model_info = get_model(req.model_id)
-    if model_info is None:
+    resolved = await resolve_model(req.model_id, db)
+    if resolved is None:
+        # Distinguish "downloading/error" from "missing" for a clearer message.
+        existing = await db.execute(
+            select(DiffusionModel).where(DiffusionModel.id == req.model_id)
+        )
+        rec = existing.scalar_one_or_none()
+        if rec is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Model '{req.model_id}' is not ready (status: {rec.status})",
+            )
         raise HTTPException(status_code=404, detail=f"Model '{req.model_id}' not found")
 
     job_id = str(uuid.uuid4())
@@ -79,7 +141,7 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
     queue_job = {
         "id": job_id,
         "model_id": req.model_id,
-        "repo_id": model_info.repo_id,
+        "repo_id": resolved.repo_id,
         "prompt": req.prompt,
         "negative_prompt": req.negative_prompt,
         "width": req.width,
@@ -91,7 +153,85 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
     }
     await generation_queue.put(queue_job)
 
-    return {"job_id": job_id, "status": "queued", "queue_size": generation_queue.qsize()}
+    queue_size = generation_queue.qsize()
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "queue_size": queue_size,
+        "queue_position": queue_size,
+    }
+
+
+# ── Hugging Face connector ──────────────────────────────────────────────────────
+
+@router.get("/hf/search")
+async def hf_search(query: str, limit: int = 25):
+    query = (query or "").strip()
+    if not query:
+        return {"results": []}
+    results = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: search_hf_models(query, limit)
+    )
+    return {"results": results}
+
+
+@router.post("/hf/download")
+async def hf_download(req: HFModelDownloadRequest, db: AsyncSession = Depends(get_db)):
+    repo_id = req.repo_id.strip()
+    if not repo_id:
+        raise HTTPException(status_code=400, detail="repo_id is required")
+
+    # Idempotent: don't re-download a model that's already present/in progress.
+    existing = await db.execute(
+        select(DiffusionModel).where(DiffusionModel.repo_id == repo_id)
+    )
+    rec = existing.scalar_one_or_none()
+    if rec is not None and rec.status in ("ready", "downloading"):
+        return {"id": rec.id, "status": rec.status}
+
+    db_id = str(uuid.uuid4())
+    model = DiffusionModel(
+        id=db_id,
+        name=req.name or repo_id.split("/")[-1],
+        repo_id=repo_id,
+        status="downloading",
+    )
+    db.add(model)
+    await db.commit()
+
+    asyncio.create_task(download_hf_model(db_id, repo_id, AsyncSessionLocal))
+    return {"id": db_id, "status": "downloading"}
+
+
+@router.get("/hf/models/{model_id}")
+async def hf_model_status(model_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(DiffusionModel).where(DiffusionModel.id == model_id)
+    )
+    rec = result.scalar_one_or_none()
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    return _downloaded_model_dict(rec, get_primary_vram_mb())
+
+
+@router.delete("/hf/models/{model_id}")
+async def hf_model_delete(model_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(DiffusionModel).where(DiffusionModel.id == model_id)
+    )
+    rec = result.scalar_one_or_none()
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    if rec.local_path:
+        try:
+            shutil.rmtree(Path(rec.local_path), ignore_errors=True)
+        except Exception:
+            pass
+
+    await db.delete(rec)
+    await db.commit()
+    return {"deleted": model_id}
 
 
 @router.get("/jobs")

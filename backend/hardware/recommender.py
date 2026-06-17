@@ -93,7 +93,7 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
     # ── Image Generation ──────────────────────────────────────────────────────
     if vram_mb < 4096:
         img = ImageGenRecommendations(
-            recommended_models=["runwayml/stable-diffusion-v1-5"],
+            recommended_models=["sd15"],
             max_resolution=(512, 512),
             recommended_steps=20,
             cfg_scale=7.0,
@@ -106,7 +106,7 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
         )
     elif vram_mb < 6144:
         img = ImageGenRecommendations(
-            recommended_models=["runwayml/stable-diffusion-v1-5"],
+            recommended_models=["sd15"],
             max_resolution=(768, 768),
             recommended_steps=25,
             cfg_scale=7.0,
@@ -120,8 +120,8 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
     elif vram_mb < 8192:
         img = ImageGenRecommendations(
             recommended_models=[
-                "stabilityai/sdxl-turbo",
-                "runwayml/stable-diffusion-v1-5",
+                "sdxl-turbo",
+                "sd15",
             ],
             max_resolution=(1024, 1024),
             recommended_steps=4,
@@ -136,9 +136,9 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
     elif vram_mb < 12288:
         img = ImageGenRecommendations(
             recommended_models=[
-                "stabilityai/stable-diffusion-xl-base-1.0",
-                "stabilityai/sdxl-turbo",
-                "runwayml/stable-diffusion-v1-5",
+                "sdxl",
+                "sdxl-turbo",
+                "sd15",
             ],
             max_resolution=(1024, 1024),
             recommended_steps=30,
@@ -153,9 +153,10 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
     else:
         img = ImageGenRecommendations(
             recommended_models=[
-                "stabilityai/stable-diffusion-xl-base-1.0",
-                "stabilityai/sdxl-turbo",
-                "runwayml/stable-diffusion-v1-5",
+                "flux-schnell",
+                "sdxl",
+                "sdxl-turbo",
+                "sd15",
             ],
             max_resolution=(2048, 2048),
             recommended_steps=35,

@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, ImageIcon, ChevronDown } from 'lucide-react'
-import { generateImage, getModels, getJobs } from '../../api/image'
-import { useWebSocket } from '../../hooks/useWebSocket'
-import { WS_BASE } from '../../api/client'
+import { Loader2, ImageIcon, ChevronDown, Plus } from 'lucide-react'
+import { generateImage, getModels, getJobs, getHFModelStatus } from '../api/image'
+import { useWebSocket } from '../hooks/useWebSocket'
+import { WS_BASE } from '../api/client'
+import HFModelBrowser from '../components/image/HFModelBrowser'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface ImageModel {
   id: string
   name: string
-  compatibility: string // e.g. "stable-diffusion", "sdxl", etc.
+  source: 'curated' | 'downloaded'
+  recommended: boolean
+  status: 'ready' | 'downloading' | 'error'
+  compatible: boolean
+  repo_id: string
+  tags?: string[]
+  gated?: boolean
 }
 
 interface ImageJob {
@@ -199,6 +206,10 @@ export default function ImageGenerationPage() {
   // Active job WS (for queue status on the newly submitted job)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
 
+  // Hugging Face model browser + download tracking
+  const [showBrowser, setShowBrowser] = useState(false)
+  const [downloadingModels, setDownloadingModels] = useState<Record<string, string>>({})
+
   useWebSocket(activeJobId ? `${WS_BASE}/ws/image/${activeJobId}` : null, {
     onMessage: (raw) => {
       const evt = raw as WsEvent
@@ -212,14 +223,57 @@ export default function ImageGenerationPage() {
   })
 
   // Fetch models
-  useEffect(() => {
+  const refreshModels = (autoSelect = false) =>
     getModels()
       .then((data: ImageModel[]) => {
         setModels(data)
-        if (data.length > 0) setSelectedModel(data[0].id)
+        if (autoSelect && !selectedModel) {
+          const first = data.find((m) => m.status === 'ready')
+          if (first) setSelectedModel(first.id)
+        }
       })
       .catch(() => setError('Failed to load models'))
+
+  useEffect(() => {
+    refreshModels(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Poll status of in-progress HF model downloads.
+  useEffect(() => {
+    const ids = Object.keys(downloadingModels)
+    if (ids.length === 0) return
+    const interval = setInterval(() => {
+      ids.forEach((id) => {
+        getHFModelStatus(id)
+          .then((m: { status: string; error_message?: string }) => {
+            if (m.status === 'ready') {
+              setDownloadingModels((prev) => {
+                const next = { ...prev }
+                delete next[id]
+                return next
+              })
+              refreshModels()
+            } else if (m.status === 'error') {
+              setDownloadingModels((prev) => {
+                const next = { ...prev }
+                delete next[id]
+                return next
+              })
+              setError(m.error_message || 'Le téléchargement du modèle a échoué.')
+            }
+          })
+          .catch(() => {})
+      })
+    }, 3000)
+    return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downloadingModels])
+
+  const handleDownloadStarted = (modelId: string) => {
+    setDownloadingModels((prev) => ({ ...prev, [modelId]: 'downloading' }))
+    refreshModels()
+  }
 
   // Fetch job history
   useEffect(() => {
@@ -303,7 +357,16 @@ export default function ImageGenerationPage() {
 
         {/* Model Selector */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-400">Model</label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-gray-400">Model</label>
+            <button
+              type="button"
+              onClick={() => setShowBrowser(true)}
+              className="flex items-center gap-1 text-[11px] font-medium text-purple-400 hover:text-purple-300"
+            >
+              <Plus className="h-3 w-3" /> Ajouter un modèle
+            </button>
+          </div>
           <div className="relative">
             <select
               className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-3 pr-8
@@ -312,20 +375,55 @@ export default function ImageGenerationPage() {
               onChange={(e) => setSelectedModel(e.target.value)}
             >
               {models.length === 0 && <option value="">No models found</option>}
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
+              {(() => {
+                const curated = models.filter((m) => m.source === 'curated')
+                const downloaded = models.filter((m) => m.source === 'downloaded')
+                const optionLabel = (m: ImageModel) => {
+                  let label = m.name
+                  if (m.status === 'downloading') label += ' (téléchargement…)'
+                  else if (m.status === 'error') label += ' (erreur)'
+                  else if (!m.compatible) label += ' — VRAM insuffisante'
+                  return label
+                }
+                return (
+                  <>
+                    {curated.length > 0 && (
+                      <optgroup label="Recommandés">
+                        {curated.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {optionLabel(m)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {downloaded.length > 0 && (
+                      <optgroup label="Téléchargés">
+                        {downloaded.map((m) => (
+                          <option key={m.id} value={m.id} disabled={m.status !== 'ready'}>
+                            {optionLabel(m)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </>
+                )
+              })()}
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-gray-500" />
           </div>
+          {Object.keys(downloadingModels).length > 0 && (
+            <span className="flex items-center gap-1.5 self-start rounded-full bg-purple-500/15
+              border border-purple-500/30 px-2 py-0.5 text-[10px] text-purple-300">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Téléchargement de {Object.keys(downloadingModels).length} modèle(s)…
+            </span>
+          )}
           {models.length > 0 && selectedModel && (() => {
             const m = models.find((x) => x.id === selectedModel)
-            return m ? (
+            return m && m.tags && m.tags.length > 0 ? (
               <span className="self-start rounded-full bg-purple-500/20 border border-purple-500/40
                 px-2 py-0.5 text-[10px] text-purple-300 font-medium">
-                {m.compatibility}
+                {m.tags[0]}
               </span>
             ) : null
           })()}
@@ -485,6 +583,12 @@ export default function ImageGenerationPage() {
           </div>
         )}
       </main>
+
+      <HFModelBrowser
+        open={showBrowser}
+        onClose={() => setShowBrowser(false)}
+        onDownloadStarted={handleDownloadStarted}
+      />
     </div>
   )
 }

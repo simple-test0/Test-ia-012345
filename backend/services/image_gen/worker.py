@@ -88,7 +88,7 @@ class GenerationWorker:
                     ws_manager.send(job_id, {
                         "type": "step",
                         "step": step_data["current"],
-                        "total": job["steps"],
+                        "total_steps": job["steps"],
                         "preview": preview_b64,
                     }),
                     loop,
@@ -165,7 +165,8 @@ class GenerationWorker:
                 "type": "completed",
                 "job_id": job_id,
                 "image_paths": output_paths,
-                "images_b64": image_b64s,
+                # `images` is the key the frontend consumes (base64 PNGs).
+                "images": image_b64s,
                 "duration_ms": duration_ms,
                 "seed": seed,
             })
