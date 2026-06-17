@@ -120,7 +120,29 @@ la sélection du device :
   « 0 messages », polling auto du statut dataset, events `info` du trainer
   affichés, erreurs de chargement remontées.
 
-## 8. Pistes restantes (suggestions)
+## 8. Installation débutant & reconnaissance matériel
+
+- **Bug de reconnaissance corrigé** : les GPU rapportent un peu moins que leur
+  VRAM nominale (8 Go → ~8188 Mo). Les breakpoints exacts faisaient tomber
+  chaque carte un tier trop bas (une RTX 4060 Ti 8 Go était classée « 6-8 GB » →
+  pas de SDXL complet, pas de `torch.compile`, agent limité au 3B). Ajout d'un
+  headroom de ~4 % pour la **sélection de tier uniquement** (le dimensionnement
+  batch/params garde la valeur réelle, conservatrice). Vérifié de 3 à 24 Go.
+- **Installeur one-click** : `install.sh` (Linux/macOS) et `install.bat`
+  (Windows, double-clic) — vérifient Python/Node, **détectent le GPU** et
+  choisissent le wheel PyTorch (CUDA cu121 / ROCm / MPS / CPU), créent le venv,
+  installent back+front, puis lancent l'optimisation.
+- **Optimisation one-click** : `scripts/optimize.py` détecte le matériel, exécute
+  le recommender et écrit un `backend/.env` optimisé (modèles, dtype,
+  `torch.compile`, pipelines résidents, plafond mégapixels, tier LLM). Relançable
+  après upgrade. Intégré aux scripts de démarrage au 1er lancement.
+- **README** « démarrage rapide » pour débutants ; `start.bat` ajouté.
+
+Exemple vérifié (RTX 4060 Ti 8 Go / 46 Go) → tier **High (8-12 GB)** : SDXL +
+SDXL-Turbo + SD1.5, 1024px, fp16, xformers, `torch.compile` ; agents Llama3.1-8B
+/ Qwen2.5-7B (q4) ; entraînement toutes architectures, batch auto, AMP fp16.
+
+## 9. Pistes restantes (suggestions)
 
 - **Multi-GPU réel** : sharding / `device_map="balanced"` (accelerate) au lieu de
   n'utiliser que le GPU primaire ; agréger la VRAM pour les gros modèles.

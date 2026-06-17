@@ -247,6 +247,20 @@ def _pick_tier(tiers: list, budget_mb: int) -> dict:
     return chosen
 
 
+def _tier_budget(budget_mb: int) -> int:
+    """Memory budget used for *tier selection only* (never for sizing math).
+
+    Discrete GPUs report slightly less than their nominal VRAM because the
+    driver reserves some (an "8 GB" RTX 4060 Ti exposes ~8188 MB, a "12 GB" card
+    ~12282 MB). With exact-nominal breakpoints every card would land one tier too
+    low. A ~4% headroom snaps these back to the intended tier without affecting
+    batch-size / max-param calculations (which keep the true, conservative value).
+    It is tight enough not to over-promote a genuine lower tier (a true 6 GB card
+    stays in the 6 GB tier).
+    """
+    return int(budget_mb * 1.04)
+
+
 def _get_tier_label(budget_mb: int) -> str:
     return _pick_tier(IMAGE_TIERS, budget_mb)["label"]
 
@@ -287,6 +301,10 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
     else:
         budget_mb = int(hw.ram_total_mb * 0.7)
 
+    # Headroom-adjusted budget for tier selection (model line-up, capability
+    # flags). Sizing math below keeps the true ``budget_mb``.
+    tier_budget = _tier_budget(budget_mb)
+
     ram_mb = hw.ram_total_mb
     cpu_cores = hw.cpu.logical_cores if hw.cpu else 4
 
@@ -299,10 +317,10 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
     # bf16 is the safe mixed-precision dtype on Apple/Ampere+; fp16 on older CUDA.
     prefer_bf16 = backend in (BACKEND_MPS, BACKEND_XPU)
 
-    image_gen = _recommend_image(budget_mb, backend, is_nvidia, supports_compile, prefer_bf16)
-    training = _recommend_training(budget_mb, cpu_cores, supports_amp, supports_compile,
+    image_gen = _recommend_image(tier_budget, backend, is_nvidia, supports_compile, prefer_bf16)
+    training = _recommend_training(budget_mb, tier_budget, cpu_cores, supports_amp, supports_compile,
                                    is_discrete, prefer_bf16)
-    agent = _recommend_agent(budget_mb, backend)
+    agent = _recommend_agent(tier_budget, backend)
 
     return RecommendationSet(
         vram_mb=budget_mb if is_discrete else 0,
@@ -311,7 +329,7 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
         image_gen=image_gen,
         training=training,
         agent=agent,
-        tier_label=f"{_get_tier_label(budget_mb)} · {backend.upper()}",
+        tier_label=f"{_get_tier_label(tier_budget)} · {backend.upper()}",
         backend=backend,
         total_vram_mb=hw.total_vram_mb,
         gpu_count=len([g for g in hw.gpus if not g.is_unified_memory]),
@@ -356,10 +374,11 @@ def _recommend_image(budget_mb, backend, is_nvidia, supports_compile, prefer_bf1
     )
 
 
-def _recommend_training(budget_mb, cpu_cores, supports_amp, supports_compile,
+def _recommend_training(budget_mb, tier_budget, cpu_cores, supports_amp, supports_compile,
                         is_discrete, prefer_bf16):
-    use_amp = supports_amp and budget_mb >= 4096
+    use_amp = supports_amp and tier_budget >= 4096
     fp16_sizing = use_amp
+    # Sizing uses the *true* (conservative) budget so we never over-commit VRAM.
     batch = _compute_batch_size(budget_mb, fp16_sizing)
     max_params = _compute_max_params(budget_mb, fp16_sizing)
     grad_accum = _compute_grad_accum(batch)
@@ -373,9 +392,9 @@ def _recommend_training(budget_mb, cpu_cores, supports_amp, supports_compile,
         precision = "fp16"
 
     feasible_archs = ["cnn", "rnn", "lstm", "gru"]
-    if budget_mb >= 2048:
+    if tier_budget >= 2048:
         feasible_archs += ["pretrained", "transformer"]
-    if budget_mb >= 3072:
+    if tier_budget >= 3072:
         feasible_archs.append("vit")
 
     return TrainingRecommendations(
@@ -387,7 +406,7 @@ def _recommend_training(budget_mb, cpu_cores, supports_amp, supports_compile,
         gradient_clip_norm=1.0,
         max_recommended_params=max_params,
         recommended_architectures=feasible_archs,
-        enable_torch_compile=supports_compile and budget_mb >= 6144,
+        enable_torch_compile=supports_compile and tier_budget >= 6144,
         pin_memory=is_discrete,
         notes=(
             f"Effective batch size: {batch * grad_accum} "
