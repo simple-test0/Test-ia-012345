@@ -29,7 +29,6 @@ _ADDED_COLUMNS = {
 
 
 def _apply_lightweight_migrations(sync_conn) -> None:
-    from sqlalchemy import text
 
     for table, columns in _ADDED_COLUMNS.items():
         existing = {

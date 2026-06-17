@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from core import security
 from core.config import settings

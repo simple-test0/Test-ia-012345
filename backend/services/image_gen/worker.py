@@ -2,14 +2,12 @@ import asyncio
 import logging
 import random
 import time
-import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-from core.config import settings
 from api.websockets.manager import ws_manager
-from services.image_gen.pipeline_manager import apply_sampler, pipeline_manager, image_to_data_url
+from core.config import settings
+from services.image_gen.pipeline_manager import apply_sampler, image_to_data_url, pipeline_manager
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +39,10 @@ class GenerationWorker:
         await ws_manager.send(job_id, {"type": "started", "job_id": job_id})
 
         # DB update — import here to avoid circular at module load
+        from sqlalchemy import select
+
         from core.database import AsyncSessionLocal
         from models.image_job import ImageJob
-        from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(ImageJob).where(ImageJob.id == job_id))
@@ -84,8 +83,8 @@ class GenerationWorker:
                             )[0]
                             decoded = (decoded / 2 + 0.5).clamp(0, 1)
                             decoded = decoded.cpu().permute(0, 2, 3, 1).float().numpy()
-                            from PIL import Image
                             import numpy as np
+                            from PIL import Image
                             img = Image.fromarray((decoded[0] * 255).astype(np.uint8))
                             img.thumbnail((256, 256))
                             preview_b64 = image_to_data_url(img, "JPEG")

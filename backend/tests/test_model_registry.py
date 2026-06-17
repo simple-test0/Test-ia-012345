@@ -1,4 +1,3 @@
-import pytest
 
 from services.image_gen import model_registry as mr
 

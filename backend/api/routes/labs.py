@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -14,9 +13,9 @@ from core.database import AsyncSessionLocal, get_db
 from hardware.detector import detect_hardware
 from models.dataset import Dataset
 from models.training_run import TrainingRun
-from services.labs.architecture_registry import ARCHITECTURE_REGISTRY, get_arch, list_archs
-from services.labs.trainer import training_manager
+from services.labs.architecture_registry import get_arch, list_archs
 from services.labs.exporter import export_model
+from services.labs.trainer import training_manager
 
 router = APIRouter(prefix="/labs", tags=["labs"])
 
@@ -68,6 +67,7 @@ class HFDatasetRequest(BaseModel):
 @router.post("/datasets/huggingface")
 async def download_hf_dataset(req: HFDatasetRequest, db: AsyncSession = Depends(get_db)):
     import asyncio
+
     from services.labs.dataset_manager import download_huggingface_dataset
 
     ds_id = str(uuid.uuid4())
@@ -96,6 +96,7 @@ async def upload_dataset(
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
+
     from services.labs.dataset_manager import process_upload
 
     ds_id = str(uuid.uuid4())
@@ -199,6 +200,7 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
 
     # Background task to drain subprocess queue → WS
     import asyncio
+
     from api.websockets.manager import ws_manager
 
     async def _drain_queue():

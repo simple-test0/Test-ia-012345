@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import AsyncSessionLocal, get_db
+from hardware.detector import get_primary_vram_mb
 from models.diffusion_model import DiffusionModel
 from models.image_job import ImageJob
 from services.image_gen.hf_connector import download_hf_model, download_progress, search_hf_models
@@ -19,7 +20,6 @@ from services.image_gen.model_registry import (
     get_compatible_models,
     resolve_model,
 )
-from hardware.detector import get_primary_vram_mb
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
 

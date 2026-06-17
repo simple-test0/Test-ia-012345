@@ -1,9 +1,6 @@
 """Training worker that runs in a separate process to avoid GIL contention."""
 import logging
 import multiprocessing as mp
-import os
-import signal
-import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -25,7 +22,7 @@ def _training_process(
     """Entry point for the training subprocess."""
     import torch
     import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset, random_split
+    from torch.utils.data import DataLoader, random_split
 
     def emit(event: dict):
         try:

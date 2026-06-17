@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import AsyncIterator, Callable, List, Optional
+from typing import Callable, List, Optional
 
 import httpx
 

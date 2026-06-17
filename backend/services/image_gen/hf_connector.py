@@ -2,7 +2,7 @@ import asyncio
 import logging
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from core.config import settings
 

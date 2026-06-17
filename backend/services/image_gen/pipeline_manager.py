@@ -3,7 +3,6 @@ import base64
 import io
 import logging
 from collections import OrderedDict
-from typing import Dict, Optional
 
 from PIL import Image
 

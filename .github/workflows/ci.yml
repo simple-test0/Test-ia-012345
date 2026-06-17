@@ -25,6 +25,9 @@ jobs:
             sqlalchemy aiosqlite pydantic pydantic-settings \
             huggingface-hub psutil ddgs httpx
           pip install -r requirements-dev.txt
+          pip install ruff
+      - name: Lint (ruff)
+        run: ruff check .
       - name: Run tests
         run: pytest -q
 
