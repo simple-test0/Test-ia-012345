@@ -1,4 +1,3 @@
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -22,6 +21,7 @@ def register_tool(name: str, description: str, parameters: dict):
         _registry[name] = Tool(name=name, description=description, parameters=parameters, func=func)
         logger.debug(f"Registered tool: {name}")
         return func
+
     return decorator
 
 
@@ -50,6 +50,7 @@ async def execute_tool(name: str, args: dict) -> Any:
         return f"Error: tool '{name}' not found"
     try:
         import asyncio
+
         if asyncio.iscoroutinefunction(tool.func):
             return await tool.func(**args)
         return tool.func(**args)

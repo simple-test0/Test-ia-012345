@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Send, Plus, ChevronDown, ChevronRight, AlertTriangle, Wrench } from 'lucide-react'
+import { Send, Plus, ChevronDown, ChevronRight, AlertTriangle, Wrench, Trash2, Pencil, Check, X } from 'lucide-react'
 import {
   getOllamaModels,
   getTools,
   getSessions,
   createSession,
-} from '../../api/agent'
-import { useWebSocket } from '../../hooks/useWebSocket'
-import { WS_BASE } from '../../api/client'
+  deleteSession,
+  renameSession,
+} from '../api/agent'
+import { useWebSocket } from '../hooks/useWebSocket'
+import { WS_BASE } from '../api/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -163,6 +165,8 @@ export default function AgentPage() {
   // Sessions
   const [sessions, setSessions] = useState<Session[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
 
   // Models & tools
   const [models, setModels] = useState<OllamaModel[]>([])
@@ -188,13 +192,12 @@ export default function AgentPage() {
       .catch(() => {})
 
     getOllamaModels()
-      .then((data: OllamaModel[]) => {
-        if (data.length === 0) {
-          setOllamaAvailable(false)
-        } else {
-          setModels(data)
-          setSelectedModel(data[0].id)
-        }
+      .then((data: { available: boolean; models: string[] }) => {
+        const names = data?.models ?? []
+        setOllamaAvailable(Boolean(data?.available) && names.length > 0)
+        const opts = names.map((name) => ({ id: name, name }))
+        setModels(opts)
+        if (opts.length > 0) setSelectedModel(opts[0].id)
       })
       .catch(() => setOllamaAvailable(false))
 
@@ -306,11 +309,42 @@ export default function AgentPage() {
         model_id: selectedModel,
         system_prompt: systemPrompt,
       })
-      setSessions((prev) => [session, ...prev])
+      setSessions((prev) => [{ ...session, message_count: 0 }, ...prev])
       setSelectedSessionId(session.id)
       setMessages([])
     } catch {
       setErrorToast('Failed to create session')
+    }
+  }
+
+  const handleDeleteSession = async (id: string) => {
+    try {
+      await deleteSession(id)
+      setSessions((prev) => prev.filter((s) => s.id !== id))
+      if (selectedSessionId === id) {
+        setSelectedSessionId(null)
+        setMessages([])
+      }
+    } catch {
+      setErrorToast('Failed to delete session')
+    }
+  }
+
+  const startRename = (s: Session) => {
+    setEditingId(s.id)
+    setEditingName(s.name)
+  }
+
+  const commitRename = async () => {
+    const id = editingId
+    const name = editingName.trim()
+    setEditingId(null)
+    if (!id || !name) return
+    try {
+      await renameSession(id, name)
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
+    } catch {
+      setErrorToast('Failed to rename session')
     }
   }
 
@@ -373,21 +407,65 @@ export default function AgentPage() {
         {/* Session list */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {sessions.map((s) => (
-            <button
+            <div
               key={s.id}
-              className={`w-full rounded-lg px-3 py-2.5 text-left transition-colors
+              className={`group w-full rounded-lg px-3 py-2.5 cursor-pointer transition-colors
                 ${selectedSessionId === s.id
                   ? 'bg-purple-600/30 border border-purple-500/50'
                   : 'hover:bg-gray-800 border border-transparent'
                 }`}
               onClick={() => {
+                if (editingId === s.id) return
                 setSelectedSessionId(s.id)
                 setMessages([])
               }}
             >
-              <p className="text-sm font-medium text-gray-200 truncate">{s.name}</p>
-              <p className="text-xs text-gray-500">{s.message_count} messages</p>
-            </button>
+              {editingId === s.id ? (
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    autoFocus
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename()
+                      else if (e.key === 'Escape') setEditingId(null)
+                    }}
+                    className="flex-1 min-w-0 rounded bg-gray-900 border border-gray-700 px-1.5 py-1
+                      text-xs text-gray-100 focus:outline-none focus:border-purple-500"
+                  />
+                  <button onClick={commitRename} title="Save" className="shrink-0 text-green-400 hover:text-green-300">
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <button onClick={() => setEditingId(null)} title="Cancel" className="shrink-0 text-gray-500 hover:text-gray-300">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-200 truncate">{s.name}</p>
+                    <p className="text-xs text-gray-500">{s.message_count} messages</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); startRename(s) }}
+                      title="Rename"
+                      className="text-gray-500 hover:text-gray-200"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id) }}
+                      title="Delete"
+                      className="text-gray-500 hover:text-red-400"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ))}
           {sessions.length === 0 && (
             <p className="px-3 py-2 text-xs text-gray-600">No sessions yet</p>

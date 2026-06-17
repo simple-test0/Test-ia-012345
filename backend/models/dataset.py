@@ -2,10 +2,9 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from core.database import Base
 from sqlalchemy import JSON, BigInteger, DateTime, Enum, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
-
-from core.database import Base
 
 
 class Dataset(Base):
@@ -13,9 +12,7 @@ class Dataset(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(256))
-    source: Mapped[str] = mapped_column(
-        Enum("huggingface", "kaggle", "upload", name="dataset_source")
-    )
+    source: Mapped[str] = mapped_column(Enum("huggingface", "kaggle", "upload", name="dataset_source"))
     source_identifier: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     task_type: Mapped[str] = mapped_column(
         Enum("classification", "detection", "segmentation", "generation", "nlp", name="task_type"),

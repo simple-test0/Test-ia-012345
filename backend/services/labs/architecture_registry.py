@@ -2,7 +2,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from services.labs.architectures.cnn import build_cnn
-from services.labs.architectures.rnn import build_rnn, build_lstm, build_gru
+from services.labs.architectures.pretrained import BACKBONES, build_pretrained
+from services.labs.architectures.rnn import build_gru, build_lstm, build_rnn
 from services.labs.architectures.transformer import build_transformer
 from services.labs.architectures.vit import build_vit
 
@@ -21,6 +22,37 @@ class ArchitectureSpec:
 
 
 ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
+    "pretrained": ArchitectureSpec(
+        id="pretrained",
+        name="Transfer Learning (pretrained backbone)",
+        description=(
+            "Start from an ImageNet-pretrained backbone and retrain only the "
+            "classifier head — the fastest path to strong image-classification "
+            "results on consumer GPUs. Unfreeze the backbone later to fine-tune."
+        ),
+        builder=build_pretrained,
+        default_config={
+            "backbone": "efficientnet_v2_s",
+            "num_classes": 10,
+            "in_channels": 3,
+            "image_size": 224,
+            "pretrained": True,
+            "freeze_backbone": True,
+        },
+        task_types=["classification"],
+        min_vram_mb=2048,
+        param_schema={
+            "backbone": {
+                "type": "select",
+                "options": list(BACKBONES.keys()),
+                "label": "Pretrained backbone",
+            },
+            "num_classes": {"type": "integer", "min": 2, "max": 10000, "label": "Number of classes"},
+            "freeze_backbone": {"type": "boolean", "label": "Freeze backbone (head-only training)"},
+            "pretrained": {"type": "boolean", "label": "Use ImageNet weights"},
+        },
+        tags=["image", "transfer-learning", "recommended", "modern"],
+    ),
     "cnn": ArchitectureSpec(
         id="cnn",
         name="Convolutional Neural Network (CNN)",
@@ -145,7 +177,7 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
             "n_layer": 6,
             "max_seq_len": 512,
             "dropout": 0.1,
-            "num_classes": 0,
+            "num_classes": 4,
         },
         task_types=["nlp", "classification"],
         min_vram_mb=2048,
@@ -156,7 +188,7 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
             "n_layer": {"type": "integer", "min": 1, "max": 48, "label": "Transformer layers"},
             "max_seq_len": {"type": "integer", "min": 64, "max": 8192, "label": "Max sequence length"},
             "dropout": {"type": "float", "min": 0.0, "max": 0.5, "label": "Dropout rate"},
-            "num_classes": {"type": "integer", "min": 0, "max": 10000, "label": "Classes (0 = LM head)"},
+            "num_classes": {"type": "integer", "min": 2, "max": 10000, "label": "Number of classes"},
         },
         tags=["nlp", "attention", "scalable"],
     ),

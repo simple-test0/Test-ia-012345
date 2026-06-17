@@ -40,6 +40,12 @@ if [ ! -d "$FRONTEND/node_modules" ]; then
   cd "$FRONTEND" && npm install && cd "$ROOT"
 fi
 
+# First-run hardware optimisation (writes backend/.env).
+if [ ! -f "$BACKEND/.env" ]; then
+  echo "[optimize] First run — tuning to your hardware..."
+  python "$ROOT/scripts/optimize.py" || true
+fi
+
 echo ""
 echo "[backend]  Starting FastAPI on http://localhost:8000"
 echo "[frontend] Starting Vite on  http://localhost:5173"

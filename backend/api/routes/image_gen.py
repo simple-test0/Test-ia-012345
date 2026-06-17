@@ -1,16 +1,15 @@
 import random
 import uuid
-from typing import Optional
 
+from core.config import settings
+from core.database import get_db
 from fastapi import APIRouter, Depends, HTTPException, Request
+from hardware.detector import get_primary_vram_mb
+from models.image_job import ImageJob
 from pydantic import BaseModel, Field
+from services.image_gen.model_registry import MODEL_REGISTRY, get_compatible_models, get_model
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from core.database import get_db
-from models.image_job import ImageJob
-from services.image_gen.model_registry import MODEL_REGISTRY, get_model, get_compatible_models
-from hardware.detector import get_primary_vram_mb
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
 
@@ -43,6 +42,8 @@ async def list_models():
             "default_width": m.default_width,
             "default_height": m.default_height,
             "tags": m.tags,
+            "family": m.family,
+            "gated": m.gated,
             "compatible": m.id in compatible,
         }
         for m in MODEL_REGISTRY
@@ -55,8 +56,29 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
     if model_info is None:
         raise HTTPException(status_code=404, detail=f"Model '{req.model_id}' not found")
 
+    # Reject oversized requests up front rather than OOM-ing the worker mid-job.
+    megapixels = (req.width * req.height) / 1_000_000
+    if megapixels > settings.max_image_megapixels:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{req.width}x{req.height} ({megapixels:.1f} MP) exceeds the limit of "
+                f"{settings.max_image_megapixels} MP. Lower the resolution."
+            ),
+        )
+
+    # Gated models need a Hugging Face token; fail clearly instead of a worker 401.
+    if model_info.gated and not settings.huggingface_token:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Model '{model_info.id}' is gated. Accept its license on Hugging Face "
+                f"and set HUGGINGFACE_TOKEN in the backend environment."
+            ),
+        )
+
     job_id = str(uuid.uuid4())
-    seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 32 - 1)
+    seed = req.seed if req.seed != -1 else random.randint(0, 2**32 - 1)
 
     db_job = ImageJob(
         id=job_id,
@@ -87,6 +109,7 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "steps": req.steps,
         "cfg_scale": req.cfg_scale,
         "seed": seed,
+        "sampler": req.sampler,
         "num_images": req.num_images,
     }
     await generation_queue.put(queue_job)

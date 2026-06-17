@@ -1,15 +1,13 @@
 import uuid
-from datetime import datetime
-
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException
 from models.agent_session import AgentSession
+from pydantic import BaseModel
 from services.agent.ollama_client import ollama_client
 from services.agent.tool_registry import list_tools
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -41,9 +39,7 @@ async def get_tools():
 
 @router.get("/sessions")
 async def list_sessions(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(AgentSession).order_by(AgentSession.updated_at.desc()).limit(50)
-    )
+    result = await db.execute(select(AgentSession).order_by(AgentSession.updated_at.desc()).limit(50))
     sessions = result.scalars().all()
     return [
         {
@@ -69,6 +65,24 @@ async def create_session(req: CreateSessionRequest, db: AsyncSession = Depends(g
         tools_used=[],
     )
     db.add(session)
+    await db.commit()
+    return {"id": session.id, "name": session.name}
+
+
+class RenameSessionRequest(BaseModel):
+    name: str
+
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(session_id: str, req: RenameSessionRequest, db: AsyncSession = Depends(get_db)):
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name cannot be empty")
+    result = await db.execute(select(AgentSession).where(AgentSession.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.name = name
     await db.commit()
     return {"id": session.id, "name": session.name}
 

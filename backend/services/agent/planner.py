@@ -1,10 +1,11 @@
 import json
 import logging
 import re
-from typing import AsyncIterator, Callable, List, Optional
+import uuid
+from typing import Callable, List, Optional
 
 from services.agent.ollama_client import OllamaClient
-from services.agent.tool_registry import execute_tool, list_tools, tools_as_json_schema
+from services.agent.tool_registry import execute_tool, tools_as_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +57,9 @@ class ReactAgent:
         on_event: Optional[Callable[[dict], None]] = None,
     ) -> str:
         system_msg = {"role": "system", "content": self._build_system_prompt()}
-        history = [system_msg] + messages
+        history = [system_msg, *messages]
 
-        for iteration in range(self.max_iterations):
+        for _ in range(self.max_iterations):
             accumulated = ""
 
             def on_token(token: str):
@@ -84,21 +85,26 @@ class ReactAgent:
             # Execute tool
             tool_name = tool_call.get("tool", "")
             tool_args = tool_call.get("args", {})
+            call_id = uuid.uuid4().hex
 
             if on_event:
-                on_event({"type": "tool_call", "tool": tool_name, "args": tool_args})
+                on_event({"type": "tool_call", "id": call_id, "tool_name": tool_name, "args": tool_args})
 
             tool_result = await execute_tool(tool_name, tool_args)
 
             if on_event:
-                on_event({"type": "tool_result", "tool": tool_name, "result": str(tool_result)})
+                on_event(
+                    {"type": "tool_result", "id": call_id, "tool_name": tool_name, "result": str(tool_result)}
+                )
 
             # Append assistant turn + tool result to history
             history.append({"role": "assistant", "content": response})
-            history.append({
-                "role": "user",
-                "content": f"Tool result for {tool_name}:\n{tool_result}",
-            })
+            history.append(
+                {
+                    "role": "user",
+                    "content": f"Tool result for {tool_name}:\n{tool_result}",
+                }
+            )
 
         if on_event:
             on_event({"type": "error", "message": "Max iterations reached"})

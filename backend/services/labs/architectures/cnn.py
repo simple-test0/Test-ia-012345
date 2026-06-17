@@ -1,26 +1,28 @@
 from typing import Any, Dict, List
 
-import torch
 import torch.nn as nn
 
 
 def build_cnn(config: Dict[str, Any]) -> nn.Module:
     num_classes = config.get("num_classes", 10)
     in_channels = config.get("in_channels", 3)
-    layers_cfg = config.get("layers", [
-        {"type": "conv", "out_channels": 32, "kernel_size": 3, "padding": 1},
-        {"type": "bn"},
-        {"type": "relu"},
-        {"type": "pool"},
-        {"type": "conv", "out_channels": 64, "kernel_size": 3, "padding": 1},
-        {"type": "bn"},
-        {"type": "relu"},
-        {"type": "pool"},
-        {"type": "flatten"},
-        {"type": "fc", "out_features": 256},
-        {"type": "relu"},
-        {"type": "dropout", "p": 0.5},
-    ])
+    layers_cfg = config.get(
+        "layers",
+        [
+            {"type": "conv", "out_channels": 32, "kernel_size": 3, "padding": 1},
+            {"type": "bn"},
+            {"type": "relu"},
+            {"type": "pool"},
+            {"type": "conv", "out_channels": 64, "kernel_size": 3, "padding": 1},
+            {"type": "bn"},
+            {"type": "relu"},
+            {"type": "pool"},
+            {"type": "flatten"},
+            {"type": "fc", "out_features": 256},
+            {"type": "relu"},
+            {"type": "dropout", "p": 0.5},
+        ],
+    )
 
     layers: List[nn.Module] = []
     current_channels = in_channels

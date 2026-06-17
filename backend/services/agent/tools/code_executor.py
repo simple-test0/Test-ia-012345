@@ -13,7 +13,11 @@ from services.agent.tool_registry import register_tool
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "Python code to execute"},
-            "timeout": {"type": "integer", "description": "Execution timeout in seconds (default 15)", "default": 15},
+            "timeout": {
+                "type": "integer",
+                "description": "Execution timeout in seconds (default 15)",
+                "default": 15,
+            },
         },
         "required": ["code"],
     },
