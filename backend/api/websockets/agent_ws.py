@@ -1,11 +1,12 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 
 from api.websockets.manager import ws_manager
 from core.database import AsyncSessionLocal
+from core.security import ws_token_ok
 from models.agent_session import AgentSession
 from services.agent.ollama_client import OllamaClient
 from services.agent.planner import ReactAgent
@@ -14,7 +15,10 @@ ws_router = APIRouter()
 
 
 @ws_router.websocket("/ws/agent/{session_id}")
-async def agent_websocket(websocket: WebSocket, session_id: str):
+async def agent_websocket(websocket: WebSocket, session_id: str, token: str = ""):
+    if not ws_token_ok(token):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     await ws_manager.connect(session_id, websocket)
     client = OllamaClient()
 

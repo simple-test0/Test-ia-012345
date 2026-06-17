@@ -3,11 +3,42 @@ import base64
 import io
 import logging
 from collections import OrderedDict
-from typing import Dict, Optional
 
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+
+# Map UI sampler names to diffusers scheduler classes (+ optional config kwargs).
+_SAMPLER_MAP = {
+    "DPM++ 2M": ("DPMSolverMultistepScheduler", {"algorithm_type": "dpmsolver++"}),
+    "Euler": ("EulerDiscreteScheduler", {}),
+    "Euler a": ("EulerAncestralDiscreteScheduler", {}),
+    "DDIM": ("DDIMScheduler", {}),
+    "LMS": ("LMSDiscreteScheduler", {}),
+}
+
+
+def apply_sampler(pipe, sampler: str) -> None:
+    """Swap the pipeline scheduler to match the requested sampler.
+
+    Best-effort: some pipelines (e.g. FLUX) use fixed schedulers, so failures
+    are logged and ignored rather than aborting generation.
+    """
+    entry = _SAMPLER_MAP.get(sampler)
+    if not entry:
+        return
+    cls_name, extra = entry
+    try:
+        import diffusers
+
+        scheduler_cls = getattr(diffusers, cls_name, None)
+        if scheduler_cls is None or not hasattr(pipe, "scheduler"):
+            return
+        pipe.scheduler = scheduler_cls.from_config(pipe.scheduler.config, **extra)
+        logger.info(f"Applied sampler {sampler} -> {cls_name}")
+    except Exception as exc:
+        logger.info(f"Could not apply sampler {sampler}: {exc}")
 
 
 class PipelineManager:
@@ -42,15 +73,22 @@ class PipelineManager:
         import torch
         from diffusers import AutoPipelineForText2Image
 
+        from core.config import settings
+
         vram_mb = self._get_vram_mb()
         dtype = torch.float16 if vram_mb >= 4096 else torch.float32
 
         logger.info(f"Loading pipeline {model_id} ({repo_id}) dtype={dtype}")
 
+        # cache_dir keeps all weights under data/models/diffusion (curated models
+        # are downloaded on demand, HF-downloaded models are a cache hit).
+        # No `revision` -> always loads the latest `main`.
         pipe = AutoPipelineForText2Image.from_pretrained(
             repo_id,
             torch_dtype=dtype,
             use_safetensors=True,
+            cache_dir=str(settings.models_dir / "diffusion"),
+            token=settings.huggingface_token or None,
         )
 
         if vram_mb >= 6144:
@@ -97,3 +135,9 @@ def image_to_base64(img: Image.Image, format: str = "JPEG") -> str:
     buf = io.BytesIO()
     img.save(buf, format=format, quality=85)
     return base64.b64encode(buf.getvalue()).decode()
+
+
+def image_to_data_url(img: Image.Image, format: str = "JPEG") -> str:
+    """Return a ready-to-render `data:` URL (unified image transport)."""
+    mime = "jpeg" if format.upper() == "JPEG" else format.lower()
+    return f"data:image/{mime};base64,{image_to_base64(img, format)}"

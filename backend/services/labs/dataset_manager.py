@@ -1,8 +1,5 @@
 import asyncio
 import logging
-import uuid
-from pathlib import Path
-from typing import List, Optional
 
 from core.config import settings
 
@@ -16,8 +13,9 @@ async def download_huggingface_dataset(
     db_session,
 ) -> None:
     """Downloads a HuggingFace dataset to disk and updates the DB record."""
-    from models.dataset import Dataset
     from sqlalchemy import select
+
+    from models.dataset import Dataset
 
     dataset_dir = settings.datasets_dir / db_id
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -58,8 +56,9 @@ async def process_upload(
     db_session,
 ) -> None:
     """Saves uploaded files and updates the DB record."""
-    from models.dataset import Dataset
     from sqlalchemy import select
+
+    from models.dataset import Dataset
 
     dataset_dir = settings.datasets_dir / db_id
     dataset_dir.mkdir(parents=True, exist_ok=True)

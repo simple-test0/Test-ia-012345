@@ -1,104 +1,131 @@
 import json
 import logging
 import re
-from typing import AsyncIterator, Callable, List, Optional
+import uuid
+from typing import Callable, List, Optional
 
 from services.agent.ollama_client import OllamaClient
-from services.agent.tool_registry import execute_tool, list_tools, tools_as_json_schema
+from services.agent.tool_registry import execute_tool, tools_as_ollama_schema
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_TEMPLATE = """You are a capable AI assistant with access to tools.
-
-Available tools:
-{tools_json}
-
-To use a tool, output a JSON block (and only a JSON block) in this format:
-```tool
-{{"tool": "<tool_name>", "args": {{...}}}}
-```
-
-After receiving the tool result, continue your response naturally.
-If you don't need any tools, just respond directly.
-Think step by step."""
+Use a tool only when it helps answer the user's request; otherwise answer directly.
+After receiving a tool result, continue your response naturally. Think step by step."""
 
 
 class ReactAgent:
+    """Agent that uses Ollama's native tool/function calling, with a regex
+    fallback for models/servers that don't return structured tool calls."""
+
     def __init__(self, client: OllamaClient, model: str):
         self.client = client
         self.model = model
         self.max_iterations = 10
 
-    def _build_system_prompt(self) -> str:
-        tools_json = json.dumps(tools_as_json_schema(), indent=2)
-        return SYSTEM_TEMPLATE.format(tools_json=tools_json)
-
     def _extract_tool_call(self, text: str) -> Optional[dict]:
-        pattern = r"```tool\s*\n(.*?)\n```"
-        match = re.search(pattern, text, re.DOTALL)
+        """Fallback: parse a ```tool {json}``` block (or bare JSON) from text."""
+        match = re.search(r"```tool\s*\n(.*?)\n```", text, re.DOTALL)
         if match:
             try:
                 return json.loads(match.group(1))
             except json.JSONDecodeError:
                 pass
-        # Fallback: bare JSON with "tool" key
         try:
             data = json.loads(text.strip())
-            if "tool" in data:
+            if isinstance(data, dict) and "tool" in data:
                 return data
         except json.JSONDecodeError:
             pass
         return None
+
+    @staticmethod
+    def _normalize_args(args) -> dict:
+        if isinstance(args, str):
+            try:
+                return json.loads(args)
+            except json.JSONDecodeError:
+                return {}
+        return args or {}
 
     async def run(
         self,
         messages: List[dict],
         on_event: Optional[Callable[[dict], None]] = None,
     ) -> str:
-        system_msg = {"role": "system", "content": self._build_system_prompt()}
-        history = [system_msg] + messages
+        tools = tools_as_ollama_schema()
+        history = [{"role": "system", "content": SYSTEM_TEMPLATE}] + messages
 
-        for iteration in range(self.max_iterations):
-            accumulated = ""
-
-            def on_token(token: str):
-                nonlocal accumulated
-                accumulated += token
+        for _ in range(self.max_iterations):
+            try:
+                message = await self.client.chat(
+                    model=self.model, messages=history, tools=tools
+                )
+            except Exception as exc:
+                logger.exception("Ollama chat failed")
                 if on_event:
-                    on_event({"type": "token", "content": token})
+                    on_event({"type": "error", "message": f"Ollama error: {exc}"})
+                return f"Error contacting the model: {exc}"
 
-            response = await self.client.stream_chat(
-                model=self.model,
-                messages=history,
-                on_token=on_token,
-            )
+            content = message.get("content", "") or ""
+            tool_calls = message.get("tool_calls") or []
 
-            tool_call = self._extract_tool_call(response)
+            # Fallback: some models embed a ```tool block instead of returning
+            # native tool_calls.
+            if not tool_calls:
+                legacy = self._extract_tool_call(content)
+                if legacy:
+                    tool_calls = [{
+                        "function": {
+                            "name": legacy.get("tool", ""),
+                            "arguments": legacy.get("args", {}),
+                        }
+                    }]
 
-            if not tool_call:
-                # Plain response — we're done
+            if not tool_calls:
+                # Final answer. Emit it as a token (so the UI renders content)
+                # then signal completion.
                 if on_event:
-                    on_event({"type": "message_complete", "full_content": response})
-                return response
+                    if content:
+                        on_event({"type": "token", "content": content})
+                    on_event({"type": "message_complete", "full_content": content})
+                return content
 
-            # Execute tool
-            tool_name = tool_call.get("tool", "")
-            tool_args = tool_call.get("args", {})
-
-            if on_event:
-                on_event({"type": "tool_call", "tool": tool_name, "args": tool_args})
-
-            tool_result = await execute_tool(tool_name, tool_args)
-
-            if on_event:
-                on_event({"type": "tool_result", "tool": tool_name, "result": str(tool_result)})
-
-            # Append assistant turn + tool result to history
-            history.append({"role": "assistant", "content": response})
             history.append({
-                "role": "user",
-                "content": f"Tool result for {tool_name}:\n{tool_result}",
+                "role": "assistant",
+                "content": content,
+                "tool_calls": tool_calls,
             })
+
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                tool_name = fn.get("name", "")
+                tool_args = self._normalize_args(fn.get("arguments", {}))
+                call_id = str(uuid.uuid4())
+
+                if on_event:
+                    on_event({
+                        "type": "tool_call",
+                        "id": call_id,
+                        "tool_name": tool_name,
+                        "args": tool_args,
+                    })
+
+                tool_result = await execute_tool(tool_name, tool_args)
+
+                if on_event:
+                    on_event({
+                        "type": "tool_result",
+                        "id": call_id,
+                        "tool_name": tool_name,
+                        "result": str(tool_result),
+                    })
+
+                history.append({
+                    "role": "tool",
+                    "name": tool_name,
+                    "content": str(tool_result),
+                })
 
         if on_event:
             on_event({"type": "error", "message": "Max iterations reached"})

@@ -1,6 +1,6 @@
 from pathlib import Path
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -36,6 +36,20 @@ class Settings(BaseSettings):
 
     # HuggingFace (optional, for private models/datasets)
     huggingface_token: str = ""
+
+    # Security: optional shared token. When set, REST requests must send
+    # `X-API-Token` and WebSocket connections must pass `?token=...`.
+    # Empty (default) keeps the local dev experience open.
+    api_token: str = ""
+
+    # Agent code execution. Disabled by default — it runs arbitrary Python.
+    # Enable explicitly (and prefer an isolated environment) before use.
+    enable_code_executor: bool = False
+    code_executor_timeout: int = 15
+    code_executor_max_memory_mb: int = 512
+
+    # Hugging Face downloads: refuse if free disk falls below this margin.
+    min_free_disk_mb: int = 2048
 
 
 settings = Settings()

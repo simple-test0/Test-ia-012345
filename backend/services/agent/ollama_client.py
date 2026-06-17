@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import AsyncIterator, Callable, List, Optional
+from typing import Callable, List, Optional
 
 import httpx
 
@@ -30,6 +30,30 @@ class OllamaClient:
                 return resp.status_code == 200
         except Exception:
             return False
+
+    async def chat(
+        self,
+        model: str,
+        messages: List[dict],
+        tools: Optional[List[dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> dict:
+        """Non-streaming chat. Returns the assistant message dict, which may
+        contain a `tool_calls` list when the model decides to call tools."""
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": {"temperature": temperature, "num_predict": max_tokens},
+        }
+        if tools:
+            payload["tools"] = tools
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(f"{self.base_url}/api/chat", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        return data.get("message", {}) or {}
 
     async def stream_chat(
         self,

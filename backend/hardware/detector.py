@@ -1,8 +1,12 @@
+import logging
 import platform
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import psutil
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,8 +83,8 @@ def detect_hardware() -> HardwareInfo:
                     if i < len(gputil_gpus):
                         driver_ver = gputil_gpus[i].driver
                         util_pct = gputil_gpus[i].load * 100
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"GPUtil unavailable: {exc}")
 
                 info.gpus.append(
                     GPUInfo(
@@ -101,8 +105,26 @@ def detect_hardware() -> HardwareInfo:
     return info
 
 
+# ── Caching ──────────────────────────────────────────────────────────────────
+# detect_hardware() blocks ~0.1s on psutil.cpu_percent and is hit by /models and
+# frequent polling, so cache the full snapshot briefly.
+_HW_CACHE: dict = {"value": None, "ts": 0.0}
+_HW_TTL = 2.0
+_VRAM_CACHE: Optional[int] = None
+
+
+def detect_hardware_cached() -> HardwareInfo:
+    now = time.monotonic()
+    if _HW_CACHE["value"] is None or (now - _HW_CACHE["ts"]) > _HW_TTL:
+        _HW_CACHE["value"] = detect_hardware()
+        _HW_CACHE["ts"] = now
+    return _HW_CACHE["value"]
+
+
 def get_primary_vram_mb() -> int:
-    hw = detect_hardware()
-    if hw.gpus:
-        return hw.gpus[0].vram_total_mb
-    return 0
+    # Total VRAM never changes during a run — compute once.
+    global _VRAM_CACHE
+    if _VRAM_CACHE is None:
+        hw = detect_hardware_cached()
+        _VRAM_CACHE = hw.gpus[0].vram_total_mb if hw.gpus else 0
+    return _VRAM_CACHE

@@ -1,4 +1,3 @@
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -39,6 +38,21 @@ def tools_as_json_schema() -> List[dict]:
             "name": t.name,
             "description": t.description,
             "parameters": t.parameters,
+        }
+        for t in _registry.values()
+    ]
+
+
+def tools_as_ollama_schema() -> List[dict]:
+    """Tools in Ollama's native function-calling format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.parameters,
+            },
         }
         for t in _registry.values()
     ]

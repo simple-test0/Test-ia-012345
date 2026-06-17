@@ -1,6 +1,5 @@
 from typing import Any, Dict
 
-import torch
 import torch.nn as nn
 
 

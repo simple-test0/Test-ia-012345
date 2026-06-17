@@ -47,8 +47,8 @@ Thumbs.db
 *.log
 logs/
 
-# Alembic
-backend/migrations/versions/
+# Alembic — migration scripts MUST be tracked; only ignore caches.
+backend/migrations/versions/__pycache__/
 
 # Kaggle
 .kaggle/
