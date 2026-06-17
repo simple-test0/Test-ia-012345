@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import random
 import shutil
 import uuid
@@ -234,6 +235,19 @@ async def hf_model_delete(model_id: str, db: AsyncSession = Depends(get_db)):
     return {"deleted": model_id}
 
 
+def _job_images_b64(output_paths) -> list:
+    """Read saved PNG files and return them as base64 strings (frontend renders
+    them with a data:image/png;base64 prefix)."""
+    images = []
+    for p in output_paths or []:
+        try:
+            data = Path(p).read_bytes()
+            images.append(base64.b64encode(data).decode())
+        except Exception:
+            pass
+    return images
+
+
 @router.get("/jobs")
 async def list_jobs(
     limit: int = 20,
@@ -247,6 +261,7 @@ async def list_jobs(
     return [
         {
             "id": j.id,
+            "job_id": j.id,
             "status": j.status,
             "model_id": j.model_id,
             "prompt": j.prompt[:100],
@@ -255,6 +270,7 @@ async def list_jobs(
             "steps": j.steps,
             "seed": j.seed,
             "output_paths": j.output_paths,
+            "images": _job_images_b64(j.output_paths),
             "duration_ms": j.duration_ms,
             "created_at": j.created_at.isoformat() if j.created_at else None,
         }
@@ -270,6 +286,7 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Job not found")
     return {
         "id": job.id,
+        "job_id": job.id,
         "status": job.status,
         "model_id": job.model_id,
         "prompt": job.prompt,
@@ -282,6 +299,7 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "sampler": job.sampler,
         "num_images": job.num_images,
         "output_paths": job.output_paths,
+        "images": _job_images_b64(job.output_paths),
         "error_message": job.error_message,
         "duration_ms": job.duration_ms,
         "created_at": job.created_at.isoformat() if job.created_at else None,

@@ -9,7 +9,6 @@ from typing import Optional
 
 from core.config import settings
 from api.websockets.manager import ws_manager
-from services.image_gen.model_registry import get_model
 from services.image_gen.pipeline_manager import pipeline_manager, image_to_base64
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import uuid
 from typing import AsyncIterator, Callable, List, Optional
 
 from services.agent.ollama_client import OllamaClient
@@ -84,14 +85,25 @@ class ReactAgent:
             # Execute tool
             tool_name = tool_call.get("tool", "")
             tool_args = tool_call.get("args", {})
+            call_id = str(uuid.uuid4())
 
             if on_event:
-                on_event({"type": "tool_call", "tool": tool_name, "args": tool_args})
+                on_event({
+                    "type": "tool_call",
+                    "id": call_id,
+                    "tool_name": tool_name,
+                    "args": tool_args,
+                })
 
             tool_result = await execute_tool(tool_name, tool_args)
 
             if on_event:
-                on_event({"type": "tool_result", "tool": tool_name, "result": str(tool_result)})
+                on_event({
+                    "type": "tool_result",
+                    "id": call_id,
+                    "tool_name": tool_name,
+                    "result": str(tool_result),
+                })
 
             # Append assistant turn + tool result to history
             history.append({"role": "assistant", "content": response})
