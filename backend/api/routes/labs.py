@@ -200,6 +200,7 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
 
     # Background task to drain subprocess queue → WS
     import asyncio
+    import queue
 
     from api.websockets.manager import ws_manager
 
@@ -210,7 +211,7 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
                 event = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: q.get(timeout=1.0)
                 )
-            except Exception:
+            except queue.Empty:
                 p = training_manager._processes.get(run_id)
                 if p and not p.is_alive():
                     break

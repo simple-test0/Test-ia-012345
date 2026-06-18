@@ -50,13 +50,11 @@ async def agent_websocket(websocket: WebSocket, session_id: str, token: str = ""
                 agent = ReactAgent(client=client, model=model_id)
 
                 events = []
+                loop = asyncio.get_running_loop()
 
                 def on_event(event: dict):
                     events.append(event)
-                    asyncio.get_event_loop().call_soon_threadsafe(
-                        asyncio.ensure_future,
-                        ws_manager.send(session_id, event),
-                    )
+                    loop.create_task(ws_manager.send(session_id, event))
 
                 assistant_response = await agent.run(messages=messages, on_event=on_event)
 
@@ -64,7 +62,7 @@ async def agent_websocket(websocket: WebSocket, session_id: str, token: str = ""
                 tools_used = list(session.tools_used or [])
                 for ev in events:
                     if ev.get("type") == "tool_call":
-                        tool_name = ev.get("tool")
+                        tool_name = ev.get("tool_name")
                         if tool_name and tool_name not in tools_used:
                             tools_used.append(tool_name)
 
