@@ -18,13 +18,12 @@ async def export_model(
     def _export() -> str:
         import torch
 
-        from services.labs.architecture_registry import get_arch
+        from services.labs.architecture_registry import build_model, get_arch
 
-        spec = get_arch(arch_id)
-        if spec is None:
+        if get_arch(arch_id) is None:
             raise ValueError(f"Unknown architecture: {arch_id}")
 
-        model = spec.builder(arch_config)
+        model = build_model(arch_id, arch_config)
         ckpt = torch.load(checkpoint_path, map_location="cpu")
         model.load_state_dict(ckpt["model_state"])
         model.eval()

@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import io
 import logging
 from collections import OrderedDict
+from typing import TYPE_CHECKING
 
-from PIL import Image
+if TYPE_CHECKING:
+    from PIL import Image
 
 logger = logging.getLogger(__name__)
 
