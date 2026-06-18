@@ -1,10 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
-
-from services.labs.architectures.cnn import build_cnn
-from services.labs.architectures.rnn import build_gru, build_lstm, build_rnn
-from services.labs.architectures.transformer import build_transformer
-from services.labs.architectures.vit import build_vit
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -12,7 +7,6 @@ class ArchitectureSpec:
     id: str
     name: str
     description: str
-    builder: Callable
     default_config: Dict[str, Any]
     task_types: List[str]
     min_vram_mb: int
@@ -25,7 +19,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="cnn",
         name="Convolutional Neural Network (CNN)",
         description="Image feature extraction via convolutional layers. Best for image classification and detection tasks.",
-        builder=build_cnn,
         default_config={
             "num_classes": 10,
             "in_channels": 3,
@@ -56,7 +49,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="rnn",
         name="Recurrent Neural Network (RNN)",
         description="Sequential data processing with recurrent connections. Suitable for NLP and time-series.",
-        builder=build_rnn,
         default_config={
             "vocab_size": 10000,
             "embed_dim": 128,
@@ -83,7 +75,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="lstm",
         name="Long Short-Term Memory (LSTM)",
         description="Advanced RNN with gating mechanisms. Better gradient flow for longer sequences.",
-        builder=build_lstm,
         default_config={
             "vocab_size": 10000,
             "embed_dim": 128,
@@ -110,7 +101,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="gru",
         name="Gated Recurrent Unit (GRU)",
         description="Efficient variant of LSTM with fewer parameters. Trains faster with similar performance.",
-        builder=build_gru,
         default_config={
             "vocab_size": 10000,
             "embed_dim": 128,
@@ -137,7 +127,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="transformer",
         name="Transformer (Encoder)",
         description="Attention-based architecture. State-of-the-art for NLP tasks, scalable to large sizes.",
-        builder=build_transformer,
         default_config={
             "vocab_size": 50257,
             "n_embd": 256,
@@ -164,7 +153,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="vit",
         name="Vision Transformer (ViT)",
         description="Transformer applied to image patches. Strong for image classification at scale.",
-        builder=build_vit,
         default_config={
             "image_size": 224,
             "patch_size": 16,
@@ -195,6 +183,27 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
 
 def get_arch(arch_id: str) -> Optional[ArchitectureSpec]:
     return ARCHITECTURE_REGISTRY.get(arch_id)
+
+
+def build_model(arch_id: str, config: Dict[str, Any]):
+    """Build a torch model for the given architecture.
+
+    Imports the builder lazily so that torch is only required when a model is
+    actually built (during training/export in a subprocess), never at app import.
+    """
+    if arch_id == "cnn":
+        from services.labs.architectures.cnn import build_cnn
+        return build_cnn(config)
+    if arch_id in ("rnn", "lstm", "gru"):
+        from services.labs.architectures.rnn import build_gru, build_lstm, build_rnn
+        return {"rnn": build_rnn, "lstm": build_lstm, "gru": build_gru}[arch_id](config)
+    if arch_id == "transformer":
+        from services.labs.architectures.transformer import build_transformer
+        return build_transformer(config)
+    if arch_id == "vit":
+        from services.labs.architectures.vit import build_vit
+        return build_vit(config)
+    raise ValueError(f"Unknown architecture: {arch_id}")
 
 
 def list_archs(vram_mb: int = 0, task_type: str = "") -> List[ArchitectureSpec]:

@@ -54,6 +54,7 @@ class GenerationWorker:
         start_ms = int(time.time() * 1000)
         output_paths = []
         error_msg = None
+        pipe = None
 
         try:
             pipe = await pipeline_manager.get_pipeline(model_id, repo_id)
@@ -143,7 +144,7 @@ class GenerationWorker:
         finally:
             # Pipelines are cached/reused — remove any LoRA so it doesn't leak
             # into the next job.
-            if job.get("lora"):
+            if job.get("lora") and pipe is not None:
                 try:
                     pipe.unload_lora_weights()
                 except Exception:

@@ -188,12 +188,17 @@ export default function AgentPage() {
       .catch(() => {})
 
     getOllamaModels()
-      .then((data: OllamaModel[]) => {
-        if (data.length === 0) {
+      .then((resp) => {
+        // Backend returns { available, models: string[] }.
+        const list: OllamaModel[] = (resp.models || []).map((name) => ({
+          id: name,
+          name,
+        }))
+        if (!resp.available || list.length === 0) {
           setOllamaAvailable(false)
         } else {
-          setModels(data)
-          setSelectedModel(data[0].id)
+          setModels(list)
+          setSelectedModel(list[0].id)
         }
       })
       .catch(() => setOllamaAvailable(false))

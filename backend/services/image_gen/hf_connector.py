@@ -153,4 +153,4 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
                 f"on https://huggingface.co/{repo_id}"
             )
         logger.exception(f"HuggingFace model download failed for {repo_id}: {exc}")
-        await _update("error", error_message=message, gated=True if "gated" in lowered else None)
+        await _update("error", error_message=message, gated=("gated" in lowered))

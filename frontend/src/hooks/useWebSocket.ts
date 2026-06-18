@@ -10,6 +10,7 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
   const wsRef = useRef<WebSocket | null>(null)
   const [connected, setConnected] = useState(false)
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const shouldReconnect = useRef(true)
   const onMessageRef = useRef(onMessage)
   onMessageRef.current = onMessage
 
@@ -17,13 +18,17 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
     if (!url || !enabled) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
+    shouldReconnect.current = true
     const ws = new WebSocket(url)
     wsRef.current = ws
 
     ws.onopen = () => setConnected(true)
     ws.onclose = () => {
       setConnected(false)
-      reconnectTimeout.current = setTimeout(connect, 2000)
+      // Don't reconnect if the socket was closed on purpose (unmount/url change).
+      if (shouldReconnect.current) {
+        reconnectTimeout.current = setTimeout(connect, 2000)
+      }
     }
     ws.onerror = () => ws.close()
     ws.onmessage = (evt) => {
@@ -39,6 +44,7 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
   useEffect(() => {
     connect()
     return () => {
+      shouldReconnect.current = false
       if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current)
       wsRef.current?.close()
     }
