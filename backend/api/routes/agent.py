@@ -39,9 +39,13 @@ async def get_tools():
 
 
 @router.get("/sessions")
-async def list_sessions(db: AsyncSession = Depends(get_db)):
+async def list_sessions(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
-        select(AgentSession).order_by(AgentSession.updated_at.desc()).limit(50)
+        select(AgentSession).order_by(AgentSession.updated_at.desc()).limit(limit).offset(offset)
     )
     sessions = result.scalars().all()
     return [

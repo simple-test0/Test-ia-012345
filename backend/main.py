@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -36,10 +37,8 @@ async def lifespan(app: FastAPI):
     yield
 
     worker_task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await worker_task
-    except asyncio.CancelledError:
-        pass
 
     from services.image_gen.pipeline_manager import pipeline_manager
     await pipeline_manager.unload_all()

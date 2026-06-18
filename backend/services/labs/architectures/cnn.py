@@ -1,9 +1,9 @@
-from typing import Any, Dict, List
+from typing import Any
 
 import torch.nn as nn
 
 
-def build_cnn(config: Dict[str, Any]) -> nn.Module:
+def build_cnn(config: dict[str, Any]) -> nn.Module:
     num_classes = config.get("num_classes", 10)
     in_channels = config.get("in_channels", 3)
     layers_cfg = config.get("layers", [
@@ -21,7 +21,7 @@ def build_cnn(config: Dict[str, Any]) -> nn.Module:
         {"type": "dropout", "p": 0.5},
     ])
 
-    layers: List[nn.Module] = []
+    layers: list[nn.Module] = []
     current_channels = in_channels
 
     for layer in layers_cfg:

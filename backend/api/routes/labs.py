@@ -1,6 +1,8 @@
+import contextlib
+import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -13,9 +15,12 @@ from core.database import AsyncSessionLocal, get_db
 from hardware.detector import detect_hardware
 from models.dataset import Dataset
 from models.training_run import TrainingRun
+from schemas import serialize_dataset, serialize_run
 from services.labs.architecture_registry import get_arch, list_archs
 from services.labs.exporter import export_model
 from services.labs.trainer import training_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/labs", tags=["labs"])
 
@@ -43,10 +48,16 @@ async def get_architectures(vram_mb: int = 0, task_type: str = ""):
 # ── Datasets ──────────────────────────────────────────────────────────────────
 
 @router.get("/datasets")
-async def list_datasets(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Dataset).order_by(Dataset.created_at.desc()))
+async def list_datasets(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Dataset).order_by(Dataset.created_at.desc()).limit(limit).offset(offset)
+    )
     datasets = result.scalars().all()
-    return [_dataset_dict(d) for d in datasets]
+    return [serialize_dataset(d) for d in datasets]
 
 
 @router.get("/datasets/{dataset_id}")
@@ -55,7 +66,7 @@ async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     ds = result.scalar_one_or_none()
     if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    return _dataset_dict(ds)
+    return serialize_dataset(ds)
 
 
 class HFDatasetRequest(BaseModel):
@@ -92,7 +103,7 @@ async def download_hf_dataset(req: HFDatasetRequest, db: AsyncSession = Depends(
 async def upload_dataset(
     name: str = Form(...),
     task_type: str = Form("classification"),
-    files: List[UploadFile] = File(...),
+    files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
@@ -120,6 +131,14 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     ds = result.scalar_one_or_none()
     if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Dissociate any training runs that referenced this dataset so they are not
+    # left pointing at a non-existent id (dataset_id is a plain column, not a
+    # DB-level FK — SQLite makes ON DELETE migrations heavy).
+    runs = await db.execute(select(TrainingRun).where(TrainingRun.dataset_id == dataset_id))
+    for run in runs.scalars().all():
+        run.dataset_id = None
+
     await db.delete(ds)
     await db.commit()
     return {"deleted": dataset_id}
@@ -130,16 +149,22 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
 class CreateRunRequest(BaseModel):
     name: str
     architecture: str
-    arch_config: Dict[str, Any]
-    training_config: Dict[str, Any]
-    dataset_id: Optional[str] = None
+    arch_config: dict[str, Any]
+    training_config: dict[str, Any]
+    dataset_id: str | None = None
 
 
 @router.get("/runs")
-async def list_runs(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(TrainingRun).order_by(TrainingRun.created_at.desc()))
+async def list_runs(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(TrainingRun).order_by(TrainingRun.created_at.desc()).limit(limit).offset(offset)
+    )
     runs = result.scalars().all()
-    return [_run_dict(r) for r in runs]
+    return [serialize_run(r) for r in runs]
 
 
 @router.get("/runs/{run_id}")
@@ -148,7 +173,7 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     run = result.scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return _run_dict(run)
+    return serialize_run(run)
 
 
 @router.post("/runs")
@@ -188,8 +213,8 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
     db.add(run)
     await db.commit()
 
-    # Start training subprocess
-    q = training_manager.start(
+    # Start training subprocess (registers the metric queue in training_manager).
+    training_manager.start(
         run_id=run_id,
         arch_id=req.architecture,
         arch_config=req.arch_config,
@@ -200,12 +225,46 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
 
     # Background task to drain subprocess queue → WS
     import asyncio
+
+    asyncio.create_task(_drain_queue(run_id))
+
+    return {"id": run_id, "status": "running"}
+
+
+async def _update_run(run_id: str, **fields) -> None:
+    """Apply a partial update to a TrainingRun in its own short-lived session.
+
+    `metrics_history_append` is a special key: the event dict to append to the
+    run's metrics history (the column is JSON, so we must reassign the list).
+    """
+    append_event = fields.pop("metrics_history_append", None)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+        rec = result.scalar_one_or_none()
+        if rec is None:
+            return
+        for key, value in fields.items():
+            setattr(rec, key, value)
+        if append_event is not None:
+            rec.metrics_history = list(rec.metrics_history or []) + [append_event]
+        await session.commit()
+
+
+async def _drain_queue(run_id: str) -> None:
+    """Forward subprocess metric-queue events to the WS and persist key ones.
+
+    Runs as a fire-and-forget task; any unexpected error is logged and a final
+    `error` event is emitted so the run does not appear stuck as "running".
+    """
+    import asyncio
     import queue
 
     from api.websockets.manager import ws_manager
 
-    async def _drain_queue():
-        from sqlalchemy import select as sel
+    q = training_manager.get_queue(run_id)
+    if q is None:
+        return
+    try:
         while True:
             try:
                 event = await asyncio.get_event_loop().run_in_executor(
@@ -218,44 +277,40 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
                 continue
 
             await ws_manager.send(run_id, event)
+            etype = event.get("type")
 
-            # Persist epoch metrics to DB
-            if event.get("type") == "epoch_metric":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(sel(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.current_epoch = event["epoch"]
-                        rec.status = "running"
-                        history = list(rec.metrics_history or [])
-                        history.append(event)
-                        rec.metrics_history = history
-                        await session.commit()
+            if etype == "epoch_metric":
+                fields = {
+                    "current_epoch": event["epoch"],
+                    "status": "running",
+                    "metrics_history_append": event,
+                }
+                # Stamp the start time once, on the first epoch.
+                if event.get("epoch") == 1:
+                    fields["started_at"] = datetime.now(UTC)
+                await _update_run(run_id, **fields)
 
-            elif event.get("type") == "completed":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(sel(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.status = "completed"
-                        rec.completed_at = datetime.now(timezone.utc)
-                        rec.best_checkpoint_path = event.get("best_checkpoint")
-                        await session.commit()
+            elif etype == "completed":
+                await _update_run(
+                    run_id,
+                    status="completed",
+                    completed_at=datetime.now(UTC),
+                    best_checkpoint_path=event.get("best_checkpoint"),
+                )
                 break
 
-            elif event.get("type") == "error":
-                async with AsyncSessionLocal() as session:
-                    r = await session.execute(sel(TrainingRun).where(TrainingRun.id == run_id))
-                    rec = r.scalar_one_or_none()
-                    if rec:
-                        rec.status = "failed"
-                        rec.error_message = event.get("message")
-                        await session.commit()
+            elif etype == "error":
+                await _update_run(
+                    run_id,
+                    status="failed",
+                    error_message=event.get("message"),
+                )
                 break
-
-    asyncio.create_task(_drain_queue())
-
-    return {"id": run_id, "status": "running"}
+    except Exception as exc:
+        logger.exception("Training drain loop failed for run %s", run_id)
+        with contextlib.suppress(Exception):
+            await ws_manager.send(run_id, {"type": "error", "message": str(exc)})
+        await _update_run(run_id, status="failed", error_message=str(exc))
 
 
 @router.post("/runs/{run_id}/pause")
@@ -289,7 +344,7 @@ async def stop_run(run_id: str, db: AsyncSession = Depends(get_db)):
     run = result.scalar_one_or_none()
     if run:
         run.status = "cancelled"
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         await db.commit()
     return {"stopped": run_id}
 
@@ -328,42 +383,3 @@ async def download_export(run_id: str):
     raise HTTPException(status_code=404, detail="No exported model found")
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _dataset_dict(d: Dataset) -> dict:
-    return {
-        "id": d.id,
-        "name": d.name,
-        "source": d.source,
-        "source_identifier": d.source_identifier,
-        "task_type": d.task_type,
-        "num_samples": d.num_samples,
-        "num_classes": d.num_classes,
-        "class_names": d.class_names,
-        "local_path": d.local_path,
-        "size_bytes": d.size_bytes,
-        "status": d.status,
-        "error_message": d.error_message,
-        "created_at": d.created_at.isoformat() if d.created_at else None,
-    }
-
-
-def _run_dict(r: TrainingRun) -> dict:
-    return {
-        "id": r.id,
-        "name": r.name,
-        "status": r.status,
-        "architecture": r.architecture,
-        "arch_config": r.arch_config,
-        "training_config": r.training_config,
-        "dataset_id": r.dataset_id,
-        "hardware_snapshot": r.hardware_snapshot,
-        "metrics_history": r.metrics_history,
-        "best_checkpoint_path": r.best_checkpoint_path,
-        "current_epoch": r.current_epoch,
-        "total_epochs": r.total_epochs,
-        "error_message": r.error_message,
-        "created_at": r.created_at.isoformat() if r.created_at else None,
-        "started_at": r.started_at.isoformat() if r.started_at else None,
-        "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-    }

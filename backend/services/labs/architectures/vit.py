@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -56,7 +56,7 @@ class ViT(nn.Module):
         return self.head(x)
 
 
-def build_vit(config: Dict[str, Any]) -> nn.Module:
+def build_vit(config: dict[str, Any]) -> nn.Module:
     return ViT(
         image_size=config.get("image_size", 224),
         patch_size=config.get("patch_size", 16),

@@ -2,7 +2,6 @@ import logging
 import platform
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 import psutil
 
@@ -33,11 +32,11 @@ class CPUInfo:
 
 @dataclass
 class HardwareInfo:
-    gpus: List[GPUInfo] = field(default_factory=list)
+    gpus: list[GPUInfo] = field(default_factory=list)
     ram_total_mb: int = 0
     ram_used_mb: int = 0
     ram_free_mb: int = 0
-    cpu: Optional[CPUInfo] = None
+    cpu: CPUInfo | None = None
     platform: str = ""
     cuda_available: bool = False
 
@@ -110,7 +109,7 @@ def detect_hardware() -> HardwareInfo:
 # frequent polling, so cache the full snapshot briefly.
 _HW_CACHE: dict = {"value": None, "ts": 0.0}
 _HW_TTL = 2.0
-_VRAM_CACHE: Optional[int] = None
+_VRAM_CACHE: int | None = None
 
 
 def detect_hardware_cached() -> HardwareInfo:

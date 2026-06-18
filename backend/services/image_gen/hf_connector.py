@@ -2,7 +2,6 @@ import asyncio
 import logging
 import shutil
 from pathlib import Path
-from typing import List
 
 from core.config import settings
 
@@ -34,7 +33,7 @@ def download_progress(repo_id: str, total_bytes: int) -> int:
     return max(0, min(99, int(current * 100 / total_bytes)))
 
 
-def search_hf_models(query: str, limit: int = 25) -> List[dict]:
+def search_hf_models(query: str, limit: int = 25) -> list[dict]:
     """Search Hugging Face for text-to-image diffusers models.
 
     Synchronous (uses huggingface_hub HTTP). Call via run_in_executor.

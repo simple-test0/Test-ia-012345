@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from services.labs.architectures.cnn import build_cnn
 from services.labs.architectures.rnn import build_gru, build_lstm, build_rnn
@@ -13,18 +14,21 @@ class ArchitectureSpec:
     name: str
     description: str
     builder: Callable
-    default_config: Dict[str, Any]
-    task_types: List[str]
+    default_config: dict[str, Any]
+    task_types: list[str]
     min_vram_mb: int
-    param_schema: Dict[str, Any]
-    tags: List[str] = field(default_factory=list)
+    param_schema: dict[str, Any]
+    tags: list[str] = field(default_factory=list)
 
 
-ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
+ARCHITECTURE_REGISTRY: dict[str, ArchitectureSpec] = {
     "cnn": ArchitectureSpec(
         id="cnn",
         name="Convolutional Neural Network (CNN)",
-        description="Image feature extraction via convolutional layers. Best for image classification and detection tasks.",
+        description=(
+            "Image feature extraction via convolutional layers. Best for image "
+            "classification and detection tasks."
+        ),
         builder=build_cnn,
         default_config={
             "num_classes": 10,
@@ -193,18 +197,14 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
 }
 
 
-def get_arch(arch_id: str) -> Optional[ArchitectureSpec]:
+def get_arch(arch_id: str) -> ArchitectureSpec | None:
     return ARCHITECTURE_REGISTRY.get(arch_id)
 
 
-def list_archs(vram_mb: int = 0, task_type: str = "") -> List[ArchitectureSpec]:
+def list_archs(vram_mb: int = 0, task_type: str = "") -> list[ArchitectureSpec]:
     results = list(ARCHITECTURE_REGISTRY.values())
     if vram_mb > 0:
         results = [a for a in results if a.min_vram_mb <= vram_mb]
     if task_type:
         results = [a for a in results if task_type in a.task_types]
     return results
-
-
-def count_parameters(model) -> int:
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)

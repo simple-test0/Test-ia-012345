@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, NamedTuple, Optional
+from typing import NamedTuple
 
 
 @dataclass
@@ -15,12 +15,12 @@ class ModelInfo:
     supports_negative_prompt: bool = True
     default_width: int = 512
     default_height: int = 512
-    tags: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     # Gated models require accepting a license on HF + a HUGGINGFACE_TOKEN.
     gated: bool = False
 
 
-MODEL_REGISTRY: List[ModelInfo] = [
+MODEL_REGISTRY: list[ModelInfo] = [
     ModelInfo(
         id="sd15",
         name="Stable Diffusion 1.5",
@@ -112,15 +112,15 @@ MODEL_REGISTRY_MAP = {m.id: m for m in MODEL_REGISTRY}
 CURATED_IDS = set(MODEL_REGISTRY_MAP)
 
 
-def get_model(model_id: str) -> Optional[ModelInfo]:
+def get_model(model_id: str) -> ModelInfo | None:
     return MODEL_REGISTRY_MAP.get(model_id)
 
 
-def get_compatible_models(vram_mb: int) -> List[ModelInfo]:
+def get_compatible_models(vram_mb: int) -> list[ModelInfo]:
     return [m for m in MODEL_REGISTRY if m.min_vram_mb <= vram_mb]
 
 
-def curated_models() -> List[ModelInfo]:
+def curated_models() -> list[ModelInfo]:
     """Recommended models, in curated (recommended-first) order."""
     return list(MODEL_REGISTRY)
 
@@ -137,7 +137,7 @@ class ResolvedModel(NamedTuple):
     supports_negative_prompt: bool
 
 
-async def resolve_model(model_id: str, db) -> Optional[ResolvedModel]:
+async def resolve_model(model_id: str, db) -> ResolvedModel | None:
     """Resolve a model_id to its repo_id + metadata.
 
     Looks up curated models first, then the DiffusionModel table for

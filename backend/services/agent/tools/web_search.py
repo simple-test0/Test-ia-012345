@@ -5,7 +5,10 @@ from services.agent.tool_registry import register_tool
 
 @register_tool(
     name="web_search",
-    description="Search the web for current information using DuckDuckGo. Returns top results with titles, snippets and URLs.",
+    description=(
+        "Search the web for current information using DuckDuckGo. Returns top "
+        "results with titles, snippets and URLs."
+    ),
     parameters={
         "type": "object",
         "properties": {

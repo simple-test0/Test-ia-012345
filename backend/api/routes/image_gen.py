@@ -1,11 +1,13 @@
 import asyncio
+import contextlib
+import logging
 import random
 import shutil
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from PIL import Image as PILImage
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,12 +16,16 @@ from core.database import AsyncSessionLocal, get_db
 from hardware.detector import get_primary_vram_mb
 from models.diffusion_model import DiffusionModel
 from models.image_job import ImageJob
-from services.image_gen.hf_connector import download_hf_model, download_progress, search_hf_models
+from schemas import serialize_diffusion_model, serialize_image_job
+from services.image_gen.hf_connector import download_hf_model, search_hf_models
 from services.image_gen.model_registry import (
     curated_models,
     get_compatible_models,
     resolve_model,
 )
+from services.image_gen.pipeline_manager import image_to_data_url
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
 
@@ -36,42 +42,12 @@ class GenerateRequest(BaseModel):
     sampler: str = "DPM++ 2M"
     num_images: int = Field(1, ge=1, le=4)
     # Optional LoRA adapter (HF repo id), applied on top of the base model.
-    lora: Optional[str] = None
+    lora: str | None = None
 
 
 class HFModelDownloadRequest(BaseModel):
     repo_id: str
-    name: Optional[str] = None
-
-
-def _downloaded_model_dict(m: DiffusionModel, vram_mb: int) -> dict:
-    if m.status == "ready":
-        progress = 100
-    elif m.status == "downloading":
-        progress = download_progress(m.repo_id, m.total_bytes or 0)
-    else:
-        progress = 0
-    return {
-        "id": m.id,
-        "name": m.name,
-        "description": "",
-        "min_vram_mb": m.min_vram_mb or 0,
-        "recommended_steps": m.recommended_steps or 25,
-        "default_cfg": m.default_cfg or 7.5,
-        "default_width": m.default_width or 512,
-        "default_height": m.default_height or 512,
-        "tags": m.tags or [],
-        "compatible": (m.min_vram_mb or 0) <= vram_mb,
-        "source": "downloaded",
-        "recommended": False,
-        "status": m.status,
-        "repo_id": m.repo_id,
-        "gated": m.gated,
-        "size_bytes": m.size_bytes,
-        "total_bytes": m.total_bytes,
-        "progress": progress,
-        "error_message": m.error_message,
-    }
+    name: str | None = None
 
 
 @router.get("/models")
@@ -106,7 +82,7 @@ async def list_models(db: AsyncSession = Depends(get_db)):
         select(DiffusionModel).order_by(DiffusionModel.created_at.desc())
     )
     for m in result.scalars().all():
-        models.append(_downloaded_model_dict(m, vram_mb))
+        models.append(serialize_diffusion_model(m, vram_mb))
 
     return models
 
@@ -223,7 +199,7 @@ async def hf_model_status(model_id: str, db: AsyncSession = Depends(get_db)):
     rec = result.scalar_one_or_none()
     if rec is None:
         raise HTTPException(status_code=404, detail="Model not found")
-    return _downloaded_model_dict(rec, get_primary_vram_mb())
+    return serialize_diffusion_model(rec, get_primary_vram_mb())
 
 
 @router.delete("/hf/models/{model_id}")
@@ -236,10 +212,8 @@ async def hf_model_delete(model_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Model not found")
 
     if rec.local_path:
-        try:
+        with contextlib.suppress(Exception):
             shutil.rmtree(Path(rec.local_path), ignore_errors=True)
-        except Exception:
-            pass
 
     await db.delete(rec)
     await db.commit()
@@ -250,24 +224,22 @@ def _job_images(output_paths, thumbnail: bool = False) -> list:
     """Return saved images as ready-to-render `data:` URLs.
 
     thumbnail=True downsizes to small JPEGs (used for the history list to keep
-    payloads light); otherwise full-resolution PNGs are returned.
+    payloads light); otherwise full-resolution PNGs are returned. Each file is
+    opened exactly once.
     """
-    from PIL import Image as PILImage
-
-    from services.image_gen.pipeline_manager import image_to_data_url
-
     images = []
     for p in output_paths or []:
         try:
-            if thumbnail:
-                img = PILImage.open(p)
-                img.thumbnail((384, 384))
-                images.append(image_to_data_url(img, "JPEG"))
-            else:
-                img = PILImage.open(p)
-                images.append(image_to_data_url(img, "PNG"))
-        except Exception:
-            pass
+            with PILImage.open(p) as img:
+                if thumbnail:
+                    img.thumbnail((384, 384))
+                    images.append(image_to_data_url(img, "JPEG"))
+                else:
+                    images.append(image_to_data_url(img, "PNG"))
+        except FileNotFoundError:
+            logger.warning("Image file missing on disk: %s", p)
+        except Exception as exc:
+            logger.warning("Failed to encode image %s: %s", p, exc)
     return images
 
 
@@ -282,21 +254,7 @@ async def list_jobs(
     )
     jobs = result.scalars().all()
     return [
-        {
-            "id": j.id,
-            "job_id": j.id,
-            "status": j.status,
-            "model_id": j.model_id,
-            "prompt": j.prompt[:100],
-            "width": j.width,
-            "height": j.height,
-            "steps": j.steps,
-            "seed": j.seed,
-            "output_paths": j.output_paths,
-            "images": _job_images(j.output_paths, thumbnail=True),
-            "duration_ms": j.duration_ms,
-            "created_at": j.created_at.isoformat() if j.created_at else None,
-        }
+        serialize_image_job(j, _job_images(j.output_paths, thumbnail=True))
         for j in jobs
     ]
 
@@ -307,24 +265,4 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     job = result.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {
-        "id": job.id,
-        "job_id": job.id,
-        "status": job.status,
-        "model_id": job.model_id,
-        "prompt": job.prompt,
-        "negative_prompt": job.negative_prompt,
-        "width": job.width,
-        "height": job.height,
-        "steps": job.steps,
-        "cfg_scale": job.cfg_scale,
-        "seed": job.seed,
-        "sampler": job.sampler,
-        "num_images": job.num_images,
-        "output_paths": job.output_paths,
-        "images": _job_images(job.output_paths),
-        "error_message": job.error_message,
-        "duration_ms": job.duration_ms,
-        "created_at": job.created_at.isoformat() if job.created_at else None,
-        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-    }
+    return serialize_image_job(job, _job_images(job.output_paths), detail=True)
