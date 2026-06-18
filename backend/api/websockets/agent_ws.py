@@ -56,7 +56,11 @@ async def agent_websocket(websocket: WebSocket, session_id: str, token: str = ""
                     events.append(event)
                     loop.create_task(ws_manager.send(session_id, event))
 
-                assistant_response = await agent.run(messages=messages, on_event=on_event)
+                try:
+                    assistant_response = await agent.run(messages=messages, on_event=on_event)
+                except Exception as exc:
+                    await websocket.send_json({"type": "error", "message": str(exc)})
+                    continue
 
                 messages.append({"role": "assistant", "content": assistant_response})
                 tools_used = list(session.tools_used or [])

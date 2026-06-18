@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -238,7 +238,7 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
                     rec = r.scalar_one_or_none()
                     if rec:
                         rec.status = "completed"
-                        rec.completed_at = datetime.utcnow()
+                        rec.completed_at = datetime.now(timezone.utc)
                         rec.best_checkpoint_path = event.get("best_checkpoint")
                         await session.commit()
                 break
@@ -289,7 +289,7 @@ async def stop_run(run_id: str, db: AsyncSession = Depends(get_db)):
     run = result.scalar_one_or_none()
     if run:
         run.status = "cancelled"
-        run.completed_at = datetime.utcnow()
+        run.completed_at = datetime.now(timezone.utc)
         await db.commit()
     return {"stopped": run_id}
 

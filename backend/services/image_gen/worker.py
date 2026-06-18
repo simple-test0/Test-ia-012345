@@ -2,7 +2,7 @@ import asyncio
 import logging
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from api.websockets.manager import ws_manager
@@ -55,6 +55,7 @@ class GenerationWorker:
         output_paths = []
         error_msg = None
         pipe = None
+        seed = job["seed"]
 
         try:
             pipe = await pipeline_manager.get_pipeline(model_id, repo_id)
@@ -103,7 +104,6 @@ class GenerationWorker:
                 )
                 return callback_kwargs
 
-            seed = job["seed"]
             if seed == -1:
                 seed = random.randint(0, 2**31 - 1)
 
@@ -171,7 +171,8 @@ class GenerationWorker:
                 db_job.output_paths = output_paths
                 db_job.error_message = error_msg
                 db_job.duration_ms = duration_ms
-                db_job.completed_at = datetime.utcnow()
+                db_job.seed = seed
+                db_job.completed_at = datetime.now(timezone.utc)
                 await db.commit()
 
         if error_msg:

@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
-    await init_db()
+    try:
+        await init_db()
+    except Exception:
+        logger.exception("Database initialisation failed — continuing, but DB operations may fail")
 
     # Import tools so they self-register
     import services.agent.tools.calculator  # noqa: F401

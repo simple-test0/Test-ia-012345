@@ -211,6 +211,7 @@ def _training_process(
                 "epoch": epoch,
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
+                "scheduler_state": scheduler.state_dict() if scheduler is not None else None,
                 "val_loss": val_loss,
             }, ckpt_path)
 
@@ -264,12 +265,13 @@ def _tensor_dataset_from_hf(split, arch_config):
     if feat_col in ("input_ids",):
         xs = torch.LongTensor(np.array(raw))
     elif feat_col == "text":
-        # Hash tokens into a fixed vocab — enough to exercise text architectures.
+        # Use zlib.adler32 for a deterministic (PYTHONHASHSEED-independent) mapping.
+        import zlib
         seq_len = arch_config.get("max_seq_len", 128)
         vocab = arch_config.get("vocab_size", 10000)
         rows = []
         for t in raw:
-            toks = [(hash(w) % vocab) for w in str(t).split()[:seq_len]]
+            toks = [(zlib.adler32(w.encode()) % vocab) for w in str(t).split()[:seq_len]]
             toks += [0] * (seq_len - len(toks))
             rows.append(toks)
         xs = torch.LongTensor(rows)
