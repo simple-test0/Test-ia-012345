@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 import httpx
 
@@ -10,10 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaClient:
-    def __init__(self, base_url: Optional[str] = None):
+    def __init__(self, base_url: str | None = None):
         self.base_url = base_url or settings.ollama_base_url
 
-    async def list_models(self) -> List[str]:
+    async def list_models(self) -> list[str]:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{self.base_url}/api/tags")
@@ -34,8 +34,8 @@ class OllamaClient:
     async def chat(
         self,
         model: str,
-        messages: List[dict],
-        tools: Optional[List[dict]] = None,
+        messages: list[dict],
+        tools: list[dict] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ) -> dict:
@@ -58,11 +58,17 @@ class OllamaClient:
     async def stream_chat(
         self,
         model: str,
-        messages: List[dict],
-        on_token: Optional[Callable[[str], None]] = None,
+        messages: list[dict],
+        on_token: Callable[[str], None] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ) -> str:
+        """Streaming chat returning the full assembled response.
+
+        Each token is also forwarded to `on_token` as it arrives. This is the
+        foundation for token-by-token streaming to the agent UI (see the
+        backend↔frontend parity doc); the WS layer already emits `token` events.
+        """
         payload = {
             "model": model,
             "messages": messages,
@@ -73,27 +79,26 @@ class OllamaClient:
             },
         }
         full_response = ""
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream(
-                "POST",
-                f"{self.base_url}/api/chat",
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    token = chunk.get("message", {}).get("content", "")
-                    if token:
-                        full_response += token
-                        if on_token:
-                            on_token(token)
-                    if chunk.get("done"):
-                        break
+        async with httpx.AsyncClient(timeout=120.0) as client, client.stream(
+            "POST",
+            f"{self.base_url}/api/chat",
+            json=payload,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                token = chunk.get("message", {}).get("content", "")
+                if token:
+                    full_response += token
+                    if on_token:
+                        on_token(token)
+                if chunk.get("done"):
+                    break
         return full_response
 
 

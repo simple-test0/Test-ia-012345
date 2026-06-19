@@ -12,7 +12,7 @@ export default function HardwareBadge() {
   const primaryGpu = gpus[0]
   const ramUsedMb = hardware.ram_used_mb as number
   const ramTotalMb = hardware.ram_total_mb as number
-  const ramPct = Math.round((ramUsedMb / ramTotalMb) * 100)
+  const ramPct = ramTotalMb > 0 ? Math.round((ramUsedMb / ramTotalMb) * 100) : 0
 
   return (
     <div className="flex items-center gap-3 text-xs text-gray-400">

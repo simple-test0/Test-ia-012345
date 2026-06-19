@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import uuid
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 from services.agent.ollama_client import OllamaClient
 from services.agent.tool_registry import execute_tool, tools_as_ollama_schema
@@ -23,7 +23,7 @@ class ReactAgent:
         self.model = model
         self.max_iterations = 10
 
-    def _extract_tool_call(self, text: str) -> Optional[dict]:
+    def _extract_tool_call(self, text: str) -> dict | None:
         """Fallback: parse a ```tool {json}``` block (or bare JSON) from text."""
         match = re.search(r"```tool\s*\n(.*?)\n```", text, re.DOTALL)
         if match:
@@ -50,8 +50,8 @@ class ReactAgent:
 
     async def run(
         self,
-        messages: List[dict],
-        on_event: Optional[Callable[[dict], None]] = None,
+        messages: list[dict],
+        on_event: Callable[[dict], None] | None = None,
     ) -> str:
         tools = tools_as_ollama_schema()
         history = [{"role": "system", "content": SYSTEM_TEMPLATE}] + messages

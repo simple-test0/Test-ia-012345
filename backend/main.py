@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -15,7 +16,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
-    await init_db()
+    try:
+        await init_db()
+    except Exception:
+        logger.exception("Database initialisation failed — continuing, but DB operations may fail")
 
     # Import tools so they self-register
     import services.agent.tools.calculator  # noqa: F401
@@ -33,10 +37,8 @@ async def lifespan(app: FastAPI):
     yield
 
     worker_task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await worker_task
-    except asyncio.CancelledError:
-        pass
 
     from services.image_gen.pipeline_manager import pipeline_manager
     await pipeline_manager.unload_all()

@@ -1,14 +1,27 @@
-import { useEffect, useState } from 'react'
-import { Loader2, Play, Pause, Square, Download, FlaskConical, Database, Cpu } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { Loader2, Play, Pause, Square, Download, FlaskConical, Database, Cpu, Trash2, Upload, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   getArchitectures,
   getDatasets,
   downloadHFDataset,
+  uploadDataset,
+  deleteDataset,
   getRuns,
   createRun,
   pauseRun,
   resumeRun,
   stopRun,
+  exportRun,
+  downloadExport,
 } from '../api/labs'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { wsUrl } from '../api/client'
@@ -50,40 +63,164 @@ const STATUS_COLORS: Record<string, string> = {
   failed: 'bg-red-500/20 text-red-300 border border-red-500/40',
 }
 
-// ─── Live metrics for a running run ──────────────────────────────────────────
+const TASK_TYPES = ['classification', 'detection', 'segmentation', 'generation', 'nlp']
+
+// ─── Live metrics chart for a running run ────────────────────────────────────
+
+interface MetricPoint {
+  epoch: number
+  train_loss?: number
+  val_loss?: number
+  val_acc?: number
+}
+
+const CHART_STYLE = {
+  contentStyle: {
+    backgroundColor: '#111827',
+    border: '1px solid #374151',
+    borderRadius: 6,
+    fontSize: 11,
+    padding: '4px 8px',
+  },
+  labelStyle: { color: '#9ca3af' },
+  itemStyle: { color: '#e5e7eb' },
+}
 
 function RunMetrics({ runId }: { runId: string }) {
-  const [latest, setLatest] = useState<Record<string, number> | null>(null)
+  const [history, setHistory] = useState<MetricPoint[]>([])
+  const [batchLoss, setBatchLoss] = useState<number | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
 
   useWebSocket(wsUrl(`/ws/training/${runId}`), {
     onMessage: (raw) => {
       const evt = raw as { type: string; message?: string } & Record<string, number>
-      if (evt.type === 'epoch_metric' || evt.type === 'batch_metric') {
-        setLatest(evt)
+      if (evt.type === 'epoch_metric') {
+        const point: MetricPoint = { epoch: evt.epoch }
+        if (evt.train_loss !== undefined) point.train_loss = +evt.train_loss.toFixed(4)
+        if (evt.val_loss !== undefined) point.val_loss = +evt.val_loss.toFixed(4)
+        if (evt.val_acc !== undefined) point.val_acc = +evt.val_acc.toFixed(4)
+        setHistory((prev) => {
+          const idx = prev.findIndex((p) => p.epoch === point.epoch)
+          if (idx >= 0) {
+            const next = [...prev]
+            next[idx] = point
+            return next
+          }
+          return [...prev, point]
+        })
+      } else if (evt.type === 'batch_metric' && evt.loss !== undefined) {
+        setBatchLoss(+evt.loss.toFixed(4))
       } else if (evt.type === 'warning' && evt.message) {
         setWarning(evt.message)
       }
     },
   })
 
+  const hasLoss = history.some((p) => p.train_loss !== undefined || p.val_loss !== undefined)
+  const hasAcc = history.some((p) => p.val_acc !== undefined)
+
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
       {warning && (
         <p className="rounded bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-[10px] text-amber-300">
           ⚠ {warning}
         </p>
       )}
-      {latest ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400">
-          {latest.epoch !== undefined && <span>epoch {latest.epoch}</span>}
-          {latest.train_loss !== undefined && <span>train_loss {latest.train_loss}</span>}
-          {latest.val_loss !== undefined && <span>val_loss {latest.val_loss}</span>}
-          {latest.val_acc !== undefined && <span>val_acc {latest.val_acc}</span>}
-          {latest.loss !== undefined && <span>loss {latest.loss}</span>}
+
+      {history.length === 0 ? (
+        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+          <span>En attente de métriques…</span>
+          {batchLoss !== null && <span className="text-gray-400">batch loss: {batchLoss}</span>}
         </div>
       ) : (
-        <p className="text-[11px] text-gray-500">En attente de métriques…</p>
+        <div className="flex flex-col gap-3">
+          {batchLoss !== null && (
+            <p className="text-[10px] text-gray-500">batch loss en cours : {batchLoss}</p>
+          )}
+
+          {hasLoss && (
+            <div>
+              <p className="mb-1 text-[10px] text-gray-500">
+                <span className="inline-block w-2 h-0.5 bg-violet-400 mr-1 align-middle" />train loss
+                {hasLoss && history.some(p => p.val_loss !== undefined) && (
+                  <><span className="inline-block w-2 h-0.5 bg-orange-400 mx-1 align-middle" />val loss</>
+                )}
+              </p>
+              <ResponsiveContainer width="100%" height={120}>
+                <LineChart data={history} margin={{ top: 4, right: 6, bottom: 0, left: -22 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis
+                    dataKey="epoch"
+                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#374151' }}
+                  />
+                  <YAxis
+                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#374151' }}
+                    width={40}
+                  />
+                  <Tooltip {...CHART_STYLE} />
+                  <Line
+                    type="monotone"
+                    dataKey="train_loss"
+                    stroke="#a78bfa"
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="train loss"
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="val_loss"
+                    stroke="#f97316"
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="val loss"
+                    connectNulls
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {hasAcc && (
+            <div>
+              <p className="mb-1 text-[10px] text-gray-500">
+                <span className="inline-block w-2 h-0.5 bg-emerald-400 mr-1 align-middle" />val accuracy
+              </p>
+              <ResponsiveContainer width="100%" height={80}>
+                <LineChart data={history} margin={{ top: 4, right: 6, bottom: 0, left: -22 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis
+                    dataKey="epoch"
+                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#374151' }}
+                  />
+                  <YAxis
+                    domain={[0, 1]}
+                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#374151' }}
+                    width={40}
+                  />
+                  <Tooltip {...CHART_STYLE} />
+                  <Line
+                    type="monotone"
+                    dataKey="val_acc"
+                    stroke="#34d399"
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="val acc"
+                    connectNulls
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -97,7 +234,7 @@ export default function LabsPage() {
   const [runs, setRuns] = useState<Run[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // New run form
+  // New run form — basic
   const [runName, setRunName] = useState('')
   const [selectedArch, setSelectedArch] = useState('')
   const [selectedDataset, setSelectedDataset] = useState('')
@@ -106,9 +243,27 @@ export default function LabsPage() {
   const [learningRate, setLearningRate] = useState(0.0003)
   const [creating, setCreating] = useState(false)
 
+  // New run form — advanced config
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [weightDecay, setWeightDecay] = useState(0.0001)
+  const [optimizer, setOptimizer] = useState('adamw')
+  const [lrScheduler, setLrScheduler] = useState('cosine')
+  const [gradAccumSteps, setGradAccumSteps] = useState(1)
+  const [valSplit, setValSplit] = useState(0.2)
+
   // HF dataset form
   const [dsName, setDsName] = useState('')
   const [dsHfId, setDsHfId] = useState('')
+  const [dsTaskType, setDsTaskType] = useState('classification')
+
+  // File upload form
+  const [uploadName, setUploadName] = useState('')
+  const [uploadTaskType, setUploadTaskType] = useState('classification')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Export state
+  const [exportFormats, setExportFormats] = useState<Record<string, string>>({})
+  const [exporting, setExporting] = useState<Record<string, boolean>>({})
 
   const refreshDatasets = () =>
     getDatasets().then(setDatasets).catch(() => {})
@@ -137,12 +292,41 @@ export default function LabsPage() {
   const handleDownloadDataset = async () => {
     if (!dsName.trim() || !dsHfId.trim()) return
     try {
-      await downloadHFDataset({ name: dsName, hf_id: dsHfId, task_type: 'classification' })
+      await downloadHFDataset({ name: dsName, hf_id: dsHfId, task_type: dsTaskType })
       setDsName('')
       setDsHfId('')
       refreshDatasets()
     } catch {
       setError('Échec du téléchargement du dataset')
+    }
+  }
+
+  const handleUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length || !uploadName.trim()) {
+      if (!uploadName.trim()) setError('Entrez un nom avant de sélectionner des fichiers')
+      return
+    }
+    const fd = new FormData()
+    fd.append('name', uploadName)
+    fd.append('task_type', uploadTaskType)
+    Array.from(e.target.files).forEach((f) => fd.append('files[]', f))
+    try {
+      await uploadDataset(fd)
+      setUploadName('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      refreshDatasets()
+    } catch {
+      setError("Échec de l'upload")
+    }
+  }
+
+  const handleDeleteDataset = async (id: string) => {
+    try {
+      await deleteDataset(id)
+      refreshDatasets()
+      if (selectedDataset === id) setSelectedDataset('')
+    } catch {
+      setError('Impossible de supprimer le dataset')
     }
   }
 
@@ -160,6 +344,11 @@ export default function LabsPage() {
           epochs,
           batch_size: batchSize,
           learning_rate: learningRate,
+          weight_decay: weightDecay,
+          optimizer,
+          lr_scheduler: lrScheduler,
+          gradient_accumulation_steps: gradAccumSteps,
+          val_split: valSplit,
         },
         dataset_id: selectedDataset || null,
       })
@@ -169,6 +358,25 @@ export default function LabsPage() {
       setError('Échec de la création du run')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleExport = async (id: string) => {
+    const format = exportFormats[id] ?? 'safetensors'
+    setExporting((prev) => ({ ...prev, [id]: true }))
+    try {
+      await exportRun(id, format)
+      const blob = await downloadExport(id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `run-${id}.${format}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError("Échec de l'export")
+    } finally {
+      setExporting((prev) => ({ ...prev, [id]: false }))
     }
   }
 
@@ -245,6 +453,68 @@ export default function LabsPage() {
             </div>
           </div>
 
+          {/* Advanced config toggle */}
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-gray-300 transition-colors self-start"
+            onClick={() => setShowAdvanced((v) => !v)}
+          >
+            {showAdvanced
+              ? <ChevronDown className="h-3 w-3" />
+              : <ChevronRight className="h-3 w-3" />}
+            Paramètres avancés
+          </button>
+
+          {showAdvanced && (
+            <div className="flex flex-col gap-2 rounded-lg bg-gray-950 border border-gray-800 p-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-gray-400">Weight decay</label>
+                  <input type="number" step={0.00001} value={weightDecay}
+                    onChange={(e) => setWeightDecay(Number(e.target.value))}
+                    className="rounded-lg bg-gray-900 border border-gray-800 p-1.5 text-xs text-gray-100 focus:outline-none focus:border-purple-500" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-gray-400">Grad accum. steps</label>
+                  <input type="number" min={1} value={gradAccumSteps}
+                    onChange={(e) => setGradAccumSteps(Number(e.target.value))}
+                    className="rounded-lg bg-gray-900 border border-gray-800 p-1.5 text-xs text-gray-100 focus:outline-none focus:border-purple-500" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-gray-400">Optimizer</label>
+                  <select value={optimizer} onChange={(e) => setOptimizer(e.target.value)}
+                    className="rounded-lg bg-gray-900 border border-gray-800 p-1.5 text-xs text-gray-100 focus:outline-none focus:border-purple-500">
+                    <option value="adamw">AdamW</option>
+                    <option value="adam">Adam</option>
+                    <option value="sgd">SGD</option>
+                    <option value="rmsprop">RMSprop</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-gray-400">LR scheduler</label>
+                  <select value={lrScheduler} onChange={(e) => setLrScheduler(e.target.value)}
+                    className="rounded-lg bg-gray-900 border border-gray-800 p-1.5 text-xs text-gray-100 focus:outline-none focus:border-purple-500">
+                    <option value="cosine">Cosine</option>
+                    <option value="linear">Linear</option>
+                    <option value="onecycle">OneCycle</option>
+                    <option value="none">None</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between">
+                  <label className="text-[11px] text-gray-400">Val split</label>
+                  <span className="text-[11px] text-purple-400 font-mono">{valSplit.toFixed(2)}</span>
+                </div>
+                <input type="range" min={0} max={0.5} step={0.05} value={valSplit}
+                  onChange={(e) => setValSplit(Number(e.target.value))}
+                  className="w-full accent-purple-500 cursor-pointer" />
+              </div>
+            </div>
+          )}
+
           <button
             onClick={handleCreateRun}
             disabled={creating || !runName.trim()}
@@ -261,15 +531,27 @@ export default function LabsPage() {
           <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-200">
             <Database className="h-4 w-4 text-purple-400" /> Datasets
           </h3>
+
+          {/* HuggingFace download */}
+          <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Depuis HuggingFace</p>
           <div className="flex gap-2">
             <input
-              className="flex-1 rounded-lg bg-gray-950 border border-gray-800 p-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+              className="flex-1 min-w-0 rounded-lg bg-gray-950 border border-gray-800 p-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
               value={dsName} onChange={(e) => setDsName(e.target.value)} placeholder="Nom"
             />
             <input
-              className="flex-1 rounded-lg bg-gray-950 border border-gray-800 p-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+              className="flex-1 min-w-0 rounded-lg bg-gray-950 border border-gray-800 p-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
               value={dsHfId} onChange={(e) => setDsHfId(e.target.value)} placeholder="HF id (ex. mnist)"
             />
+          </div>
+          <div className="flex gap-2">
+            <select
+              value={dsTaskType}
+              onChange={(e) => setDsTaskType(e.target.value)}
+              className="flex-1 rounded-lg bg-gray-950 border border-gray-800 p-2 text-xs text-gray-100 focus:outline-none focus:border-purple-500"
+            >
+              {TASK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
             <button
               onClick={handleDownloadDataset}
               disabled={!dsName.trim() || !dsHfId.trim()}
@@ -278,14 +560,55 @@ export default function LabsPage() {
               <Download className="h-3.5 w-3.5" />
             </button>
           </div>
+
+          {/* Local file upload */}
+          <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mt-1">Upload local</p>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 min-w-0 rounded-lg bg-gray-950 border border-gray-800 p-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500"
+              value={uploadName}
+              onChange={(e) => setUploadName(e.target.value)}
+              placeholder="Nom du dataset"
+            />
+            <select
+              value={uploadTaskType}
+              onChange={(e) => setUploadTaskType(e.target.value)}
+              className="flex-1 rounded-lg bg-gray-950 border border-gray-800 p-2 text-xs text-gray-100 focus:outline-none focus:border-purple-500"
+            >
+              {TASK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <label className="cursor-pointer flex items-center gap-1 rounded-lg bg-gray-800 hover:bg-gray-700 px-2.5 py-2 text-xs text-gray-200 shrink-0"
+              title="Sélectionner des fichiers">
+              <Upload className="h-3.5 w-3.5" />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleUploadFiles}
+              />
+            </label>
+          </div>
+
+          {/* Dataset list */}
           <ul className="flex flex-col gap-1">
             {datasets.length === 0 && <li className="text-[11px] text-gray-600">Aucun dataset.</li>}
             {datasets.map((d) => (
-              <li key={d.id} className="flex items-center justify-between text-xs text-gray-300">
+              <li key={d.id} className="group flex items-center justify-between text-xs text-gray-300">
                 <span className="truncate">{d.name}</span>
-                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${STATUS_COLORS[d.status] ?? STATUS_COLORS.pending}`}>
-                  {d.status}
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${STATUS_COLORS[d.status] ?? STATUS_COLORS.pending}`}>
+                    {d.status}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteDataset(d.id)}
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-900/50
+                      text-gray-500 hover:text-red-400 transition-all"
+                    title="Supprimer"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -344,6 +667,30 @@ export default function LabsPage() {
                     <button onClick={() => control(stopRun, run.id)}
                       className="flex items-center gap-1 rounded-lg bg-red-900/50 hover:bg-red-900 px-2.5 py-1 text-xs text-red-200">
                       <Square className="h-3 w-3" /> Stop
+                    </button>
+                  </div>
+                )}
+
+                {run.status === 'completed' && (
+                  <div className="flex items-center gap-2">
+                    <select
+                      className="rounded-lg bg-gray-950 border border-gray-800 px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-purple-500"
+                      value={exportFormats[run.id] ?? 'safetensors'}
+                      onChange={(e) => setExportFormats((prev) => ({ ...prev, [run.id]: e.target.value }))}
+                    >
+                      <option value="safetensors">safetensors</option>
+                      <option value="onnx">onnx</option>
+                    </select>
+                    <button
+                      onClick={() => handleExport(run.id)}
+                      disabled={exporting[run.id]}
+                      className="flex items-center gap-1 rounded-lg bg-gray-800 hover:bg-gray-700
+                        disabled:opacity-50 px-2.5 py-1 text-xs text-gray-200"
+                    >
+                      {exporting[run.id]
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Download className="h-3 w-3" />}
+                      Exporter
                     </button>
                   </div>
                 )}

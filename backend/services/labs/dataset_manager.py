@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 
 from core.config import settings
 
@@ -67,7 +68,8 @@ async def process_upload(
     num_files = 0
 
     for upload_file in files:
-        dest = dataset_dir / upload_file.filename
+        safe_name = Path(upload_file.filename or "file").name or "file"
+        dest = dataset_dir / safe_name
         content = await upload_file.read()
         dest.write_bytes(content)
         total_bytes += len(content)

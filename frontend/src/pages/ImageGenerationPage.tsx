@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, ImageIcon, ChevronDown, Plus } from 'lucide-react'
-import { generateImage, getModels, getJobs, getHFModelStatus } from '../api/image'
+import { Loader2, ImageIcon, ChevronDown, Plus, Trash2, X, ZoomIn } from 'lucide-react'
+import { generateImage, getModels, getJobs, getJob, getHFModelStatus, deleteHFModel } from '../api/image'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { wsUrl } from '../api/client'
 import HFModelBrowser from '../components/image/HFModelBrowser'
@@ -27,6 +27,18 @@ interface ImageJob {
   created_at: string
   images?: string[] // base64 data URLs
   queue_position?: number
+}
+
+interface ImageJobDetail extends ImageJob {
+  cfg_scale?: number
+  steps?: number
+  sampler?: string
+  width?: number
+  height?: number
+  seed?: number
+  negative_prompt?: string
+  model_id?: string
+  completed_at?: string
 }
 
 interface GenerateParams {
@@ -127,14 +139,103 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
   )
 }
 
+// ─── Job Detail Modal ─────────────────────────────────────────────────────────
+
+interface JobDetailModalProps {
+  job: ImageJobDetail
+  onClose: () => void
+}
+
+function JobDetailModal({ job, onClose }: JobDetailModalProps) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative bg-gray-900 border border-gray-700 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        <div className="p-4 space-y-4">
+          {job.images && job.images.length > 0 && (
+            <div className={`grid gap-2 ${job.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+              {job.images.map((img, i) => (
+                <img key={i} src={img} alt={`Generated ${i + 1}`}
+                  className="w-full rounded-xl object-contain" />
+              ))}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+            <div className="col-span-2">
+              <p className="text-gray-500 mb-0.5">Prompt</p>
+              <p className="text-gray-200 whitespace-pre-wrap">{job.prompt}</p>
+            </div>
+            {job.negative_prompt && (
+              <div className="col-span-2">
+                <p className="text-gray-500 mb-0.5">Negative prompt</p>
+                <p className="text-gray-400 whitespace-pre-wrap">{job.negative_prompt}</p>
+              </div>
+            )}
+            {job.model_id && (
+              <div>
+                <p className="text-gray-500">Model</p>
+                <p className="text-gray-200 font-mono">{job.model_id}</p>
+              </div>
+            )}
+            {job.sampler && (
+              <div>
+                <p className="text-gray-500">Sampler</p>
+                <p className="text-gray-200">{job.sampler}</p>
+              </div>
+            )}
+            {job.steps !== undefined && (
+              <div>
+                <p className="text-gray-500">Steps</p>
+                <p className="text-gray-200">{job.steps}</p>
+              </div>
+            )}
+            {job.cfg_scale !== undefined && (
+              <div>
+                <p className="text-gray-500">CFG Scale</p>
+                <p className="text-gray-200">{job.cfg_scale}</p>
+              </div>
+            )}
+            {job.seed !== undefined && (
+              <div>
+                <p className="text-gray-500">Seed</p>
+                <p className="text-gray-200 font-mono">{job.seed}</p>
+              </div>
+            )}
+            {job.width !== undefined && job.height !== undefined && (
+              <div>
+                <p className="text-gray-500">Size</p>
+                <p className="text-gray-200">{job.width} × {job.height}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Job Card ─────────────────────────────────────────────────────────────────
 
 interface JobCardProps {
   job: ImageJob
   onJobCompleted: (jobId: string, images: string[]) => void
+  onOpenDetail: (jobId: string) => void
 }
 
-function JobCard({ job, onJobCompleted }: JobCardProps) {
+function JobCard({ job, onJobCompleted, onOpenDetail }: JobCardProps) {
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
@@ -152,7 +253,10 @@ function JobCard({ job, onJobCompleted }: JobCardProps) {
       )}
 
       {job.status === 'completed' && job.images && job.images.length > 0 && (
-        <div className={`grid gap-1 ${job.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+        <div
+          className={`relative group/img grid gap-1 cursor-pointer ${job.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}
+          onClick={() => onOpenDetail(job.job_id)}
+        >
           {job.images.map((img, i) => (
             <img
               key={i}
@@ -161,11 +265,18 @@ function JobCard({ job, onJobCompleted }: JobCardProps) {
               className="w-full rounded-lg object-cover aspect-square"
             />
           ))}
+          <div className="absolute inset-0 flex items-center justify-center rounded-lg
+            bg-black/0 group-hover/img:bg-black/40 transition-colors">
+            <ZoomIn className="h-6 w-6 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" />
+          </div>
         </div>
       )}
 
       {job.status === 'completed' && (!job.images || job.images.length === 0) && (
-        <div className="flex h-24 items-center justify-center rounded-lg bg-gray-800">
+        <div
+          className="flex h-24 items-center justify-center rounded-lg bg-gray-800 cursor-pointer hover:bg-gray-700 transition-colors"
+          onClick={() => onOpenDetail(job.job_id)}
+        >
           <ImageIcon className="h-8 w-8 text-gray-600" />
         </div>
       )}
@@ -212,6 +323,9 @@ export default function ImageGenerationPage() {
   // Hugging Face model browser + download tracking
   const [showBrowser, setShowBrowser] = useState(false)
   const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({})
+
+  // Job detail modal
+  const [detailJob, setDetailJob] = useState<ImageJobDetail | null>(null)
 
   useWebSocket(activeJobId ? wsUrl(`/ws/image/${activeJobId}`) : null, {
     onMessage: (raw) => {
@@ -277,6 +391,25 @@ export default function ImageGenerationPage() {
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [downloadingModels])
+
+  const handleDeleteHFModel = async (id: string) => {
+    try {
+      await deleteHFModel(id)
+      refreshModels()
+      if (selectedModel === id) setSelectedModel('')
+    } catch {
+      setError('Failed to delete model')
+    }
+  }
+
+  const handleOpenDetail = async (jobId: string) => {
+    try {
+      const data = await getJob(jobId)
+      setDetailJob(data as ImageJobDetail)
+    } catch {
+      setError('Failed to load job detail')
+    }
+  }
 
   const handleDownloadStarted = (modelId: string) => {
     setDownloadingModels((prev) => ({ ...prev, [modelId]: 0 }))
@@ -442,6 +575,31 @@ export default function ImageGenerationPage() {
           })()}
         </div>
 
+        {/* Downloaded models management list */}
+        {models.filter((m) => m.source === 'downloaded').length > 0 && (
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">
+              Modèles téléchargés
+            </label>
+            <div className="flex flex-col gap-1">
+              {models.filter((m) => m.source === 'downloaded').map((m) => (
+                <div key={m.id} className="group flex items-center justify-between rounded-lg
+                  bg-gray-900 border border-gray-800 px-2.5 py-1.5">
+                  <span className="text-xs text-gray-300 truncate">{m.name}</span>
+                  <button
+                    onClick={() => handleDeleteHFModel(m.id)}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded
+                      hover:bg-red-900/50 text-gray-500 hover:text-red-400 transition-all"
+                    title="Supprimer le modèle"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Sampler */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-400">Sampler</label>
@@ -605,7 +763,7 @@ export default function ImageGenerationPage() {
         ) : (
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
             {jobs.map((job) => (
-              <JobCard key={job.job_id} job={job} onJobCompleted={handleJobCompleted} />
+              <JobCard key={job.job_id} job={job} onJobCompleted={handleJobCompleted} onOpenDetail={handleOpenDetail} />
             ))}
           </div>
         )}
@@ -616,6 +774,10 @@ export default function ImageGenerationPage() {
         onClose={() => setShowBrowser(false)}
         onDownloadStarted={handleDownloadStarted}
       />
+
+      {detailJob && (
+        <JobDetailModal job={detailJob} onClose={() => setDetailJob(null)} />
+      )}
     </div>
   )
 }

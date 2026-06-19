@@ -1,12 +1,11 @@
 from dataclasses import dataclass
-from typing import List, Optional
 
 from .detector import HardwareInfo, detect_hardware
 
 
 @dataclass
 class ImageGenRecommendations:
-    recommended_models: List[str]
+    recommended_models: list[str]
     max_resolution: tuple
     recommended_steps: int
     cfg_scale: float
@@ -27,13 +26,13 @@ class TrainingRecommendations:
     gradient_accumulation_steps: int
     gradient_clip_norm: float
     max_recommended_params: int
-    recommended_architectures: List[str]
+    recommended_architectures: list[str]
     notes: str = ""
 
 
 @dataclass
 class AgentRecommendations:
-    recommended_models: List[str]
+    recommended_models: list[str]
     context_window_tokens: int
     quantization: str
     notes: str = ""
@@ -82,7 +81,7 @@ def _get_tier_label(vram_mb: int) -> str:
         return "Workstation / Multi-GPU (> 24 GB)"
 
 
-def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
+def recommend(hw: HardwareInfo | None = None) -> RecommendationSet:
     if hw is None:
         hw = detect_hardware()
 

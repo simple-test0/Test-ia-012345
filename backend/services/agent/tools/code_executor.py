@@ -1,3 +1,4 @@
+import contextlib
 import subprocess
 import sys
 import tempfile
@@ -17,33 +18,33 @@ def _build_preexec(max_memory_mb: int, cpu_seconds: int):
 
     def _limit():
         mem_bytes = max_memory_mb * 1024 * 1024
-        try:
+        fsize = 50 * 1024 * 1024  # cap output files at 50MB to prevent disk-fill
+        with contextlib.suppress(ValueError, OSError):
             resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-        except (ValueError, OSError):
-            pass
-        try:
+        with contextlib.suppress(ValueError, OSError):
             # Hard CPU cap (defends against busy loops that ignore the wall timeout).
             resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
-        except (ValueError, OSError):
-            pass
-        try:
-            # Cap output files at 50MB to prevent disk-fill.
-            fsize = 50 * 1024 * 1024
+        with contextlib.suppress(ValueError, OSError):
             resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
-        except (ValueError, OSError):
-            pass
 
     return _limit
 
 
 @register_tool(
     name="code_executor",
-    description="Execute a Python code snippet and return its stdout output. Useful for data processing, calculations, or testing logic.",
+    description=(
+        "Execute a Python code snippet and return its stdout output. Useful for "
+        "data processing, calculations, or testing logic."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "Python code to execute"},
-            "timeout": {"type": "integer", "description": "Execution timeout in seconds", "default": 15},
+            "timeout": {
+                "type": "integer",
+                "description": "Execution timeout in seconds",
+                "default": 15,
+            },
         },
         "required": ["code"],
     },
