@@ -1,4 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { Loader2, Play, Pause, Square, Download, FlaskConical, Database, Cpu, Trash2, Upload, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   getArchitectures,
@@ -56,40 +65,162 @@ const STATUS_COLORS: Record<string, string> = {
 
 const TASK_TYPES = ['classification', 'detection', 'segmentation', 'generation', 'nlp']
 
-// ─── Live metrics for a running run ──────────────────────────────────────────
+// ─── Live metrics chart for a running run ────────────────────────────────────
+
+interface MetricPoint {
+  epoch: number
+  train_loss?: number
+  val_loss?: number
+  val_acc?: number
+}
+
+const CHART_STYLE = {
+  contentStyle: {
+    backgroundColor: '#111827',
+    border: '1px solid #374151',
+    borderRadius: 6,
+    fontSize: 11,
+    padding: '4px 8px',
+  },
+  labelStyle: { color: '#9ca3af' },
+  itemStyle: { color: '#e5e7eb' },
+}
 
 function RunMetrics({ runId }: { runId: string }) {
-  const [latest, setLatest] = useState<Record<string, number> | null>(null)
+  const [history, setHistory] = useState<MetricPoint[]>([])
+  const [batchLoss, setBatchLoss] = useState<number | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
 
   useWebSocket(wsUrl(`/ws/training/${runId}`), {
     onMessage: (raw) => {
       const evt = raw as { type: string; message?: string } & Record<string, number>
-      if (evt.type === 'epoch_metric' || evt.type === 'batch_metric') {
-        setLatest(evt)
+      if (evt.type === 'epoch_metric') {
+        const point: MetricPoint = { epoch: evt.epoch }
+        if (evt.train_loss !== undefined) point.train_loss = +evt.train_loss.toFixed(4)
+        if (evt.val_loss !== undefined) point.val_loss = +evt.val_loss.toFixed(4)
+        if (evt.val_acc !== undefined) point.val_acc = +evt.val_acc.toFixed(4)
+        setHistory((prev) => {
+          const idx = prev.findIndex((p) => p.epoch === point.epoch)
+          if (idx >= 0) {
+            const next = [...prev]
+            next[idx] = point
+            return next
+          }
+          return [...prev, point]
+        })
+      } else if (evt.type === 'batch_metric' && evt.loss !== undefined) {
+        setBatchLoss(+evt.loss.toFixed(4))
       } else if (evt.type === 'warning' && evt.message) {
         setWarning(evt.message)
       }
     },
   })
 
+  const hasLoss = history.some((p) => p.train_loss !== undefined || p.val_loss !== undefined)
+  const hasAcc = history.some((p) => p.val_acc !== undefined)
+
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
       {warning && (
         <p className="rounded bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-[10px] text-amber-300">
           ⚠ {warning}
         </p>
       )}
-      {latest ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400">
-          {latest.epoch !== undefined && <span>epoch {latest.epoch}</span>}
-          {latest.train_loss !== undefined && <span>train_loss {latest.train_loss}</span>}
-          {latest.val_loss !== undefined && <span>val_loss {latest.val_loss}</span>}
-          {latest.val_acc !== undefined && <span>val_acc {latest.val_acc}</span>}
-          {latest.loss !== undefined && <span>loss {latest.loss}</span>}
+
+      {history.length === 0 ? (
+        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+          <span>En attente de métriques…</span>
+          {batchLoss !== null && <span className="text-gray-400">batch loss: {batchLoss}</span>}
         </div>
       ) : (
-        <p className="text-[11px] text-gray-500">En attente de métriques…</p>
+        <div className="flex flex-col gap-3">
+          {batchLoss !== null && (
+            <p className="text-[10px] text-gray-500">batch loss en cours : {batchLoss}</p>
+          )}
+
+          {hasLoss && (
+            <div>
+              <p className="mb-1 text-[10px] text-gray-500">
+                <span className="inline-block w-2 h-0.5 bg-violet-400 mr-1 align-middle" />train loss
+                {hasLoss && history.some(p => p.val_loss !== undefined) && (
+                  <><span className="inline-block w-2 h-0.5 bg-orange-400 mx-1 align-middle" />val loss</>
+                )}
+              </p>
+              <ResponsiveContainer width="100%" height={120}>
+                <LineChart data={history} margin={{ top: 4, right: 6, bottom: 0, left: -22 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis
+                    dataKey="epoch"
+                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#374151' }}
+                  />
+                  <YAxis
+                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#374151' }}
+                    width={40}
+                  />
+                  <Tooltip {...CHART_STYLE} />
+                  <Line
+                    type="monotone"
+                    dataKey="train_loss"
+                    stroke="#a78bfa"
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="train loss"
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="val_loss"
+                    stroke="#f97316"
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="val loss"
+                    connectNulls
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {hasAcc && (
+            <div>
+              <p className="mb-1 text-[10px] text-gray-500">
+                <span className="inline-block w-2 h-0.5 bg-emerald-400 mr-1 align-middle" />val accuracy
+              </p>
+              <ResponsiveContainer width="100%" height={80}>
+                <LineChart data={history} margin={{ top: 4, right: 6, bottom: 0, left: -22 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis
+                    dataKey="epoch"
+                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#374151' }}
+                  />
+                  <YAxis
+                    domain={[0, 1]}
+                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#374151' }}
+                    width={40}
+                  />
+                  <Tooltip {...CHART_STYLE} />
+                  <Line
+                    type="monotone"
+                    dataKey="val_acc"
+                    stroke="#34d399"
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="val acc"
+                    connectNulls
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
