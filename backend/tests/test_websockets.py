@@ -16,6 +16,7 @@ pytestmark = pytest.mark.skipif(not _HAS_TORCH, reason="torch not installed")
 @pytest.fixture(scope="module")
 def client():
     from fastapi.testclient import TestClient
+
     from main import app
 
     with TestClient(app) as c:
