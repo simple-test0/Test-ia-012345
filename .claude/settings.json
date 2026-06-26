@@ -1,0 +1,28 @@
+{
+  "autoMemoryEnabled": true,
+  "permissions": {
+    "allow": [
+      "Bash(make *)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(git add *)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(pytest*)",
+      "Bash(ruff*)",
+      "Bash(mypy*)",
+      "Bash(alembic*)",
+      "Bash(python -m pytest*)"
+    ],
+    "deny": [
+      "Read(frontend/node_modules/**)",
+      "Read(backend/.venv/**)",
+      "Read(data/**)",
+      "Read(frontend/dist/**)",
+      "Read(**/__pycache__/**)",
+      "Read(**/*.pyc)"
+    ]
+  }
+}
