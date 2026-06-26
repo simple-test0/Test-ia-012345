@@ -1,6 +1,6 @@
 ---
 name: add-arch
-description: Add a new PyTorch model architecture to the Labs training module — creates builder function and registers ArchitectureSpec
+description: Invoke when adding or creating a new neural network architecture in the Labs module (CNN, RNN, Transformer, ViT, or custom) — provides PyTorch builder template and ArchitectureSpec registration in architecture_registry.py
 ---
 
 # Add Labs Architecture: $ARGUMENTS

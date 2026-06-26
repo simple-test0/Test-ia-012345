@@ -1,6 +1,6 @@
 ---
 name: add-route
-description: Add a new FastAPI REST endpoint — creates route file, Pydantic schema, and wires the router in main.py
+description: Invoke when adding or creating a new REST API endpoint, FastAPI router, or HTTP route — provides router template, Pydantic schema pattern, and main.py include_router wiring
 ---
 
 # Add REST Route: $ARGUMENTS

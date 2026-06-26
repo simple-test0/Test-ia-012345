@@ -1,5 +1,18 @@
 {
   "autoMemoryEnabled": true,
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/skill-router.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(make *)",
@@ -14,7 +27,8 @@
       "Bash(ruff*)",
       "Bash(mypy*)",
       "Bash(alembic*)",
-      "Bash(python -m pytest*)"
+      "Bash(python -m pytest*)",
+      "Bash(python3 .claude/hooks/*)"
     ],
     "deny": [
       "Read(frontend/node_modules/**)",

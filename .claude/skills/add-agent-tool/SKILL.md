@@ -1,7 +1,6 @@
 ---
 name: add-agent-tool
-description: Add a new Ollama agent tool — creates the file with @register_tool and wires the import in main.py lifespan
-disable-model-invocation: false
+description: Invoke when adding or creating a new tool for the Ollama agent — provides the exact @register_tool decorator template, file location, and main.py lifespan import wiring
 ---
 
 # Add Agent Tool: $ARGUMENTS

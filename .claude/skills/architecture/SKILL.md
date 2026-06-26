@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Full project map, data flows, file purposes, env vars, and DB schema — load when you need to understand how the codebase fits together
+description: Invoke when you need to understand the project structure, locate where a feature is implemented, trace an image generation or agent data flow, or check environment variables and DB schema — contains full file map and ASCII flow diagrams
 ---
 
 # AI Studio — Architecture Reference

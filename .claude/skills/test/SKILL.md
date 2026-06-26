@@ -1,6 +1,6 @@
 ---
 name: test
-description: Reference for running tests — which command to use, which file covers what, and test infrastructure details
+description: Invoke when running tests, checking coverage, writing new tests, or debugging test failures — lists exact pytest commands, maps each test file to what it covers, and shows fixture usage
 ---
 
 # Test Reference
