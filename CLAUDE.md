@@ -58,29 +58,36 @@ frontend/src/
 ### Ajouter un modèle image
 - Éditer `backend/services/image_gen/model_registry.py` — ajouter une entrée `ModelSpec` dans `MODELS`
 
-## Commandes courantes
+## Commandes courantes (Makefile à la racine)
 
 ```bash
-# Tests backend (rapides, sans torch)
-cd backend && pytest
+make test          # tests backend rapides (sans torch)
+make test-heavy    # tests GPU (marqueur heavy)
+make test-front    # type-check + build frontend
+make test-all      # test + test-front
+make test-cov      # couverture de code
 
-# Tests complets (nécessite GPU)
-cd backend && pytest -m heavy
+make lint          # ruff check
+make lint-fix      # ruff check --fix
+make type-check    # mypy (config: backend/mypy.ini)
+make check         # lint + type-check + test + test-front
 
-# Lint backend
+make dev           # démarre backend + frontend (./start.sh)
+make dev-back      # backend seul (uvicorn --reload)
+make dev-front     # frontend seul (vite dev)
+
+make migrate       # alembic upgrade head
+make migration msg="describe change"   # alembic revision --autogenerate
+
+make install       # pip install deps + npm install + pre-commit install
+```
+
+Équivalents directs si Makefile indisponible :
+```bash
+cd backend && pytest -x -q
 cd backend && ruff check .
-
-# Type-check + build frontend
+cd backend && mypy .
 cd frontend && npm run build
-
-# Démarrage local
-./start.sh
-# ou prod:
-MODE=prod ./start.sh
-
-# Migrations DB
-cd backend && alembic upgrade head
-cd backend && alembic revision --autogenerate -m "description"
 ```
 
 ## Variables d'environnement (backend/.env)
