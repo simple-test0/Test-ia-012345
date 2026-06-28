@@ -17,7 +17,7 @@ async def lifespan(app: FastAPI):
     ensure_dirs()
     await init_db()
 
-    # Import tools so they self-register
+    # CLAUDE: add new agent tools here — import triggers @register_tool
     import services.agent.tools.calculator  # noqa: F401
     import services.agent.tools.code_executor  # noqa: F401
     import services.agent.tools.web_search  # noqa: F401
@@ -90,7 +90,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# REST routes
+# REST routes — CLAUDE: add new routers here with include_router
 from fastapi import Depends  # noqa: E402
 
 from api.routes import agent, hardware, image_gen, labs  # noqa: E402

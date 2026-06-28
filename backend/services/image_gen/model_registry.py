@@ -32,6 +32,7 @@ class ModelInfo:
     family: str = ""
 
 
+# CLAUDE: add new curated models here — append ModelInfo entries
 MODEL_REGISTRY: List[ModelInfo] = [
     ModelInfo(
         id="sd15",
@@ -122,49 +123,6 @@ MODEL_REGISTRY: List[ModelInfo] = [
         tags=["sd3", "high-quality", "typography", "gated"],
         gated=True,
         family="sd3",
-    ),
-    ModelInfo(
-        id="flux-schnell",
-        name="FLUX.1 schnell",
-        description="State-of-the-art open model (Apache-2.0). 1-4 steps, CFG=0. Large (~24GB).",
-        pipeline_class="FluxPipeline",
-        repo_id="black-forest-labs/FLUX.1-schnell",
-        min_vram_mb=22000,
-        recommended_steps=4,
-        default_cfg=0.0,
-        supports_negative_prompt=False,
-        default_width=1024,
-        default_height=1024,
-        tags=["flux", "fast", "high-res", "sota"],
-    ),
-    ModelInfo(
-        id="flux-dev",
-        name="FLUX.1 dev (gated)",
-        description="Top-quality FLUX model. Gated: needs a HF token + license acceptance.",
-        pipeline_class="FluxPipeline",
-        repo_id="black-forest-labs/FLUX.1-dev",
-        min_vram_mb=24000,
-        recommended_steps=28,
-        default_cfg=3.5,
-        supports_negative_prompt=False,
-        default_width=1024,
-        default_height=1024,
-        tags=["flux", "high-res", "sota"],
-        gated=True,
-    ),
-    ModelInfo(
-        id="sd35",
-        name="Stable Diffusion 3.5 Large (gated)",
-        description="Latest SD family, excellent prompt/typography. Gated: needs HF token + license.",
-        pipeline_class="StableDiffusion3Pipeline",
-        repo_id="stabilityai/stable-diffusion-3.5-large",
-        min_vram_mb=18000,
-        recommended_steps=28,
-        default_cfg=4.5,
-        default_width=1024,
-        default_height=1024,
-        tags=["stable-diffusion", "high-res", "sota"],
-        gated=True,
     ),
 ]
 

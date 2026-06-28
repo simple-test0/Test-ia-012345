@@ -21,6 +21,7 @@ class ArchitectureSpec:
     tags: List[str] = field(default_factory=list)
 
 
+# CLAUDE: add new architectures here — import builder above, add ArchitectureSpec entry
 ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
     "pretrained": ArchitectureSpec(
         id="pretrained",
