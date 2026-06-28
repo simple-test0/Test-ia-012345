@@ -78,6 +78,9 @@ class GenerationWorker:
                     try:
                         import torch
                         with torch.no_grad():
+                            # The VAE may be upcast to fp32 (SDXL black-image fix)
+                            # while latents are fp16 — match dtypes before decoding.
+                            latents = latents.to(pipeline.vae.dtype)
                             decoded = pipeline.vae.decode(
                                 latents / pipeline.vae.config.scaling_factor, return_dict=False
                             )[0]

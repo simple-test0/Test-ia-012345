@@ -83,13 +83,27 @@ class PipelineManager:
         # cache_dir keeps all weights under data/models/diffusion (curated models
         # are downloaded on demand, HF-downloaded models are a cache hit).
         # No `revision` -> always loads the latest `main`.
-        pipe = AutoPipelineForText2Image.from_pretrained(
-            repo_id,
+        # Prefer the fp16 variant (matches what the HF connector downloads); fall
+        # back to the default files for repos that don't ship an fp16 variant.
+        common = dict(
             torch_dtype=dtype,
             use_safetensors=True,
             cache_dir=str(settings.models_dir / "diffusion"),
             token=settings.huggingface_token or None,
         )
+        try:
+            pipe = AutoPipelineForText2Image.from_pretrained(repo_id, variant="fp16", **common)
+        except Exception:
+            pipe = AutoPipelineForText2Image.from_pretrained(repo_id, **common)
+
+        # SDXL's VAE overflows in fp16 and renders all-black images; keep it in
+        # fp32. `upcast_vae` is a no-op concept on pipelines that don't define it.
+        if dtype == torch.float16 and hasattr(pipe, "upcast_vae"):
+            try:
+                pipe.upcast_vae()
+                logger.info("Upcast VAE to fp32 (avoids black SDXL outputs)")
+            except Exception as exc:
+                logger.info(f"Could not upcast VAE: {exc}")
 
         if vram_mb >= 6144:
             try:
