@@ -50,8 +50,8 @@ echo.
 echo Deux fenetres vont s'ouvrir. Ferme-les pour arreter les serveurs.
 echo.
 
-start "AI Studio - Backend" cmd /k "cd /d "%BACKEND%" && call .venv\Scripts\activate.bat && uvicorn main:app %UVICORN_ARGS%"
-start "AI Studio - Frontend" cmd /k "cd /d "%FRONTEND%" && npm run dev"
+start "AI Studio - Backend" /d "%BACKEND%" cmd /k "call .venv\Scripts\activate.bat && uvicorn main:app %UVICORN_ARGS%"
+start "AI Studio - Frontend" /d "%FRONTEND%" cmd /k "npm run dev"
 
 REM Ouvrir le navigateur sur l'interface
 timeout /t 4 /nobreak >nul
