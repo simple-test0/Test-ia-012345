@@ -18,7 +18,6 @@ Design goals
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 from .detector import (
     BACKEND_CPU,
@@ -33,7 +32,7 @@ from .detector import (
 
 @dataclass
 class ImageGenRecommendations:
-    recommended_models: List[str]
+    recommended_models: list[str]
     max_resolution: tuple
     recommended_steps: int
     cfg_scale: float
@@ -59,7 +58,7 @@ class TrainingRecommendations:
     gradient_accumulation_steps: int
     gradient_clip_norm: float
     max_recommended_params: int
-    recommended_architectures: List[str]
+    recommended_architectures: list[str]
     enable_torch_compile: bool = False
     pin_memory: bool = False
     notes: str = ""
@@ -67,7 +66,7 @@ class TrainingRecommendations:
 
 @dataclass
 class AgentRecommendations:
-    recommended_models: List[str]
+    recommended_models: list[str]
     context_window_tokens: int
     quantization: str
     notes: str = ""
@@ -287,7 +286,7 @@ def _compute_grad_accum(batch: int, target_effective_batch: int = 32) -> int:
     return max(1, target_effective_batch // max(1, batch))
 
 
-def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
+def recommend(hw: HardwareInfo | None = None) -> RecommendationSet:
     if hw is None:
         hw = detect_hardware()
 

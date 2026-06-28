@@ -2,11 +2,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
-from core.config import ensure_dirs, settings
-from core.database import init_db
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+
+from core.config import ensure_dirs, settings
+from core.database import init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

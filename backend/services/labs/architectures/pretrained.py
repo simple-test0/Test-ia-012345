@@ -10,7 +10,7 @@ MobileNetV3 (tiny), EfficientNetV2-S and ConvNeXt-Tiny (modern, efficient),
 ResNet-50 (classic baseline) and ViT-B/16 (transformer).
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import torch.nn as nn
 
@@ -24,7 +24,7 @@ BACKBONES = {
 }
 
 
-def build_pretrained(config: Dict[str, Any]) -> nn.Module:
+def build_pretrained(config: dict[str, Any]) -> nn.Module:
     import torchvision
 
     backbone = config.get("backbone", "efficientnet_v2_s")

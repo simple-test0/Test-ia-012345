@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -7,17 +7,17 @@ class ArchitectureSpec:
     id: str
     name: str
     description: str
-    default_config: Dict[str, Any]
-    task_types: List[str]
+    default_config: dict[str, Any]
+    task_types: list[str]
     min_vram_mb: int
-    param_schema: Dict[str, Any]
-    tags: List[str] = field(default_factory=list)
+    param_schema: dict[str, Any]
+    tags: list[str] = field(default_factory=list)
 
 
 # CLAUDE: add new architectures here — add an ArchitectureSpec entry below and a
 # matching lazy branch in build_model() (keep builder imports lazy so the app
 # imports without torch).
-ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
+ARCHITECTURE_REGISTRY: dict[str, ArchitectureSpec] = {
     "pretrained": ArchitectureSpec(
         id="pretrained",
         name="Transfer Learning (pretrained backbone)",
@@ -59,7 +59,10 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
     "cnn": ArchitectureSpec(
         id="cnn",
         name="Convolutional Neural Network (CNN)",
-        description="Image feature extraction via convolutional layers. Best for image classification and detection tasks.",
+        description=(
+            "Image feature extraction via convolutional layers. Best for image "
+            "classification and detection tasks."
+        ),
         default_config={
             "num_classes": 10,
             "in_channels": 3,
@@ -222,11 +225,11 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
 }
 
 
-def get_arch(arch_id: str) -> Optional[ArchitectureSpec]:
+def get_arch(arch_id: str) -> ArchitectureSpec | None:
     return ARCHITECTURE_REGISTRY.get(arch_id)
 
 
-def build_model(arch_id: str, config: Dict[str, Any]):
+def build_model(arch_id: str, config: dict[str, Any]):
     """Build a torch model for the given architecture.
 
     Imports the builder lazily so that torch is only required when a model is
@@ -250,7 +253,7 @@ def build_model(arch_id: str, config: Dict[str, Any]):
     raise ValueError(f"Unknown architecture: {arch_id}")
 
 
-def list_archs(vram_mb: int = 0, task_type: str = "") -> List[ArchitectureSpec]:
+def list_archs(vram_mb: int = 0, task_type: str = "") -> list[ArchitectureSpec]:
     results = list(ARCHITECTURE_REGISTRY.values())
     if vram_mb > 0:
         results = [a for a in results if a.min_vram_mb <= vram_mb]

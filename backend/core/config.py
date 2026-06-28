@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import List
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,7 +25,7 @@ class Settings(BaseSettings):
         return f"sqlite+aiosqlite:///{self.db_path}"
 
     # Networking / CORS — overridable via CORS_ORIGINS="https://a.com,https://b.com"
-    cors_origins: List[str] = [
+    cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
         "http://127.0.0.1:5173",

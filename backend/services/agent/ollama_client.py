@@ -7,18 +7,19 @@ removes per-request overhead and avoids socket exhaustion under load.
 
 import json
 import logging
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 import httpx
+
 from core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class OllamaClient:
-    def __init__(self, base_url: Optional[str] = None):
+    def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or settings.ollama_base_url).rstrip("/")
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     def _get_client(self) -> httpx.AsyncClient:
         # Lazily create so the client is bound to the running event loop.
@@ -35,7 +36,7 @@ class OllamaClient:
             await self._client.aclose()
         self._client = None
 
-    async def list_models(self) -> List[str]:
+    async def list_models(self) -> list[str]:
         try:
             resp = await self._get_client().get("/api/tags", timeout=5.0)
             resp.raise_for_status()
@@ -54,8 +55,8 @@ class OllamaClient:
     async def chat(
         self,
         model: str,
-        messages: List[dict],
-        tools: Optional[List[dict]] = None,
+        messages: list[dict],
+        tools: list[dict] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ) -> dict:
@@ -78,8 +79,8 @@ class OllamaClient:
     async def stream_chat(
         self,
         model: str,
-        messages: List[dict],
-        on_token: Optional[Callable[[str], None]] = None,
+        messages: list[dict],
+        on_token: Callable[[str], None] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ) -> str:

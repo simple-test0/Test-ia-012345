@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import uuid
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 from services.agent.ollama_client import OllamaClient
 from services.agent.tool_registry import execute_tool, tools_as_json_schema
@@ -34,7 +34,7 @@ class ReactAgent:
         tools_json = json.dumps(tools_as_json_schema(), indent=2)
         return SYSTEM_TEMPLATE.format(tools_json=tools_json)
 
-    def _extract_tool_call(self, text: str) -> Optional[dict]:
+    def _extract_tool_call(self, text: str) -> dict | None:
         pattern = r"```tool\s*\n(.*?)\n```"
         match = re.search(pattern, text, re.DOTALL)
         if match:
@@ -53,8 +53,8 @@ class ReactAgent:
 
     async def run(
         self,
-        messages: List[dict],
-        on_event: Optional[Callable[[dict], None]] = None,
+        messages: list[dict],
+        on_event: Callable[[dict], None] | None = None,
     ) -> str:
         system_msg = {"role": "system", "content": self._build_system_prompt()}
         history = [system_msg, *messages]

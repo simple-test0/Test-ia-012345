@@ -1,13 +1,13 @@
 import asyncio
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import WebSocket
 
 
 class ConnectionManager:
     def __init__(self):
-        self._connections: Dict[str, List[WebSocket]] = defaultdict(list)
+        self._connections: dict[str, list[WebSocket]] = defaultdict(list)
         self._lock = asyncio.Lock()
 
     async def connect(self, room_id: str, websocket: WebSocket) -> None:

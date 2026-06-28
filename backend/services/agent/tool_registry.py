@@ -1,6 +1,7 @@
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ class Tool:
     func: Callable
 
 
-_registry: Dict[str, Tool] = {}
+_registry: dict[str, Tool] = {}
 
 
 def register_tool(name: str, description: str, parameters: dict):
@@ -25,15 +26,15 @@ def register_tool(name: str, description: str, parameters: dict):
     return decorator
 
 
-def get_tool(name: str) -> Optional[Tool]:
+def get_tool(name: str) -> Tool | None:
     return _registry.get(name)
 
 
-def list_tools() -> List[Tool]:
+def list_tools() -> list[Tool]:
     return list(_registry.values())
 
 
-def tools_as_json_schema() -> List[dict]:
+def tools_as_json_schema() -> list[dict]:
     return [
         {
             "name": t.name,
@@ -44,7 +45,7 @@ def tools_as_json_schema() -> List[dict]:
     ]
 
 
-def tools_as_ollama_schema() -> List[dict]:
+def tools_as_ollama_schema() -> list[dict]:
     """Tools in Ollama's native function-calling format."""
     return [
         {

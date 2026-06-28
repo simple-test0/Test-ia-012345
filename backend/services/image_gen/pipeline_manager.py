@@ -14,7 +14,7 @@ import base64
 import io
 import logging
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from core.config import settings
 from hardware.detector import detect_hardware, empty_accelerator_cache
@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineManager:
-    def __init__(self, max_loaded: Optional[int] = None):
+    def __init__(self, max_loaded: int | None = None):
         self._max_loaded = max_loaded or max(1, settings.max_pipelines_loaded)
-        self._loaded: "OrderedDict[str, object]" = OrderedDict()
+        self._loaded: OrderedDict[str, object] = OrderedDict()
         self._lock = asyncio.Lock()
 
     async def get_pipeline(self, model_id: str, repo_id: str):
@@ -67,12 +67,12 @@ class PipelineManager:
         # Prefer the fp16 variant (matches what the HF connector downloads); fall
         # back to the default files for repos that don't ship an fp16 variant.
         token = settings.huggingface_token or None
-        common = dict(
-            torch_dtype=dtype,
-            use_safetensors=True,
-            cache_dir=str(settings.models_dir / "diffusion"),
-            token=token,
-        )
+        common = {
+            "torch_dtype": dtype,
+            "use_safetensors": True,
+            "cache_dir": str(settings.models_dir / "diffusion"),
+            "token": token,
+        }
         try:
             try:
                 pipe = AutoPipelineForText2Image.from_pretrained(repo_id, variant="fp16", **common)

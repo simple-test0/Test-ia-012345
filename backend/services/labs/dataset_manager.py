@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
 
 from core.config import settings
 
@@ -15,8 +14,9 @@ async def download_huggingface_dataset(
     db_session,
 ) -> None:
     """Downloads a HuggingFace dataset to disk and updates the DB record."""
-    from models.dataset import Dataset
     from sqlalchemy import select
+
+    from models.dataset import Dataset
 
     dataset_dir = settings.datasets_dir / db_id
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -52,7 +52,7 @@ async def download_huggingface_dataset(
         await _update_status("error", error=str(exc))
 
 
-def _safe_name(filename: Optional[str]) -> Optional[str]:
+def _safe_name(filename: str | None) -> str | None:
     """Strip any directory components to prevent path traversal.
 
     Returns None for empty names, pure paths, or hidden/dotfiles.
@@ -77,8 +77,9 @@ async def process_upload(
     in chunks so large uploads don't blow up memory. Always resolves the record
     to a terminal status (ready/error).
     """
-    from models.dataset import Dataset
     from sqlalchemy import select
+
+    from models.dataset import Dataset
 
     async def _set_status(**fields):
         async with db_session() as db:

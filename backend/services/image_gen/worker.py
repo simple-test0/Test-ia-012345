@@ -1,9 +1,9 @@
 import asyncio
+import contextlib
 import logging
 import random
 import time
 from datetime import datetime
-from typing import Optional
 
 from api.websockets.manager import ws_manager
 from core.config import settings
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class GenerationWorker:
     def __init__(self, queue: asyncio.Queue):
         self._queue = queue
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def run(self) -> None:
         self._loop = asyncio.get_event_loop()
@@ -111,16 +111,16 @@ class GenerationWorker:
             generator = torch.Generator(device="cuda" if torch.cuda.is_available() else "cpu")
             generator.manual_seed(seed)
 
-            generate_kwargs = dict(
-                prompt=job["prompt"],
-                num_inference_steps=job["steps"],
-                generator=generator,
-                width=job["width"],
-                height=job["height"],
-                num_images_per_prompt=job.get("num_images", 1),
-                callback_on_step_end=step_callback,
-                callback_on_step_end_tensor_inputs=["latents"],
-            )
+            generate_kwargs = {
+                "prompt": job["prompt"],
+                "num_inference_steps": job["steps"],
+                "generator": generator,
+                "width": job["width"],
+                "height": job["height"],
+                "num_images_per_prompt": job.get("num_images", 1),
+                "callback_on_step_end": step_callback,
+                "callback_on_step_end_tensor_inputs": ["latents"],
+            }
             if job.get("negative_prompt"):
                 generate_kwargs["negative_prompt"] = job["negative_prompt"]
             if job.get("cfg_scale", 7.5) > 0:
@@ -145,10 +145,8 @@ class GenerationWorker:
             # Pipelines are cached/reused — remove any LoRA so it doesn't leak
             # into the next job.
             if job.get("lora") and pipe is not None:
-                try:
+                with contextlib.suppress(Exception):
                     pipe.unload_lora_weights()
-                except Exception:
-                    pass
 
         duration_ms = int(time.time() * 1000) - start_ms
         status = "completed" if not error_msg else "failed"

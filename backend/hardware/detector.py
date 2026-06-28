@@ -24,7 +24,6 @@ import platform
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 import psutil
 
@@ -72,11 +71,11 @@ class CPUInfo:
 
 @dataclass
 class HardwareInfo:
-    gpus: List[GPUInfo] = field(default_factory=list)
+    gpus: list[GPUInfo] = field(default_factory=list)
     ram_total_mb: int = 0
     ram_used_mb: int = 0
     ram_free_mb: int = 0
-    cpu: Optional[CPUInfo] = None
+    cpu: CPUInfo | None = None
     platform: str = ""
     # ``cuda_available`` is kept for backward compatibility (it is true for both
     # CUDA and ROCm, since ROCm masquerades as CUDA in torch). Prefer the richer
@@ -88,7 +87,7 @@ class HardwareInfo:
     torch_version: str = ""
 
     @property
-    def primary_gpu(self) -> Optional[GPUInfo]:
+    def primary_gpu(self) -> GPUInfo | None:
         return self.gpus[0] if self.gpus else None
 
     @property
@@ -99,7 +98,7 @@ class HardwareInfo:
 
 # ── Internal cache ──────────────────────────────────────────────────────────
 _cache_lock = threading.Lock()
-_cached_info: Optional[HardwareInfo] = None
+_cached_info: HardwareInfo | None = None
 _cached_at: float = 0.0
 
 # Prime psutil's CPU sampler once so later non-blocking reads return real data
@@ -177,7 +176,7 @@ def _cpu_name() -> str:
         return name
     try:
         if platform.system() == "Linux":
-            with open("/proc/cpuinfo", "r", encoding="utf-8") as fh:
+            with open("/proc/cpuinfo", encoding="utf-8") as fh:
                 for line in fh:
                     if line.lower().startswith("model name"):
                         return line.split(":", 1)[1].strip()
@@ -398,7 +397,7 @@ def get_memory_budget_mb() -> int:
     return int(hw.ram_total_mb * 0.7)
 
 
-def get_torch_device(prefer: Optional[str] = None) -> str:
+def get_torch_device(prefer: str | None = None) -> str:
     """Return the best ``tensor.to(...)`` device string for this machine.
 
     ``prefer`` may force a backend (e.g. ``"cpu"`` or ``"cuda:1"``); it is honoured

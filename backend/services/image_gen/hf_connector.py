@@ -2,7 +2,6 @@ import asyncio
 import logging
 import shutil
 from pathlib import Path
-from typing import List
 
 from core.config import settings
 
@@ -82,7 +81,7 @@ def _param_count(model) -> int:
     return 0
 
 
-def search_hf_models(query: str, limit: int = 25) -> List[dict]:
+def search_hf_models(query: str, limit: int = 25) -> list[dict]:
     """Search Hugging Face for text-to-image diffusers models.
 
     Synchronous (uses huggingface_hub HTTP). Call via run_in_executor.
@@ -93,14 +92,14 @@ def search_hf_models(query: str, limit: int = 25) -> List[dict]:
 
     api = HfApi(token=_token())
 
-    common = dict(
-        search=query,
-        filter="diffusers",
-        pipeline_tag="text-to-image",
-        sort="downloads",
-        direction=-1,
-        limit=limit,
-    )
+    common = {
+        "search": query,
+        "filter": "diffusers",
+        "pipeline_tag": "text-to-image",
+        "sort": "downloads",
+        "direction": -1,
+        "limit": limit,
+    }
     # `expand=[...]` lets us fetch safetensors metadata (parameter counts).
     # Older huggingface_hub versions don't support it, so fall back to `full`.
     try:
@@ -203,11 +202,11 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
             from diffusers import DiffusionPipeline
 
             # No `revision` -> always pulls the latest `main` snapshot.
-            common = dict(cache_dir=str(diffusion_dir), token=_token())
+            common = {"cache_dir": str(diffusion_dir), "token": _token()}
             attempts = (
-                dict(variant="fp16", use_safetensors=True),  # smallest: fp16 only
-                dict(use_safetensors=True),                  # repo has no fp16 variant
-                dict(),                                       # last resort: .bin weights
+                {"variant": "fp16", "use_safetensors": True},  # smallest: fp16 only
+                {"use_safetensors": True},                  # repo has no fp16 variant
+                {},                                       # last resort: .bin weights
             )
             path = None
             last_exc = None

@@ -8,7 +8,7 @@ usually a one-line change.
 """
 
 from dataclasses import dataclass, field
-from typing import List, NamedTuple, Optional
+from typing import NamedTuple
 
 
 @dataclass
@@ -24,7 +24,7 @@ class ModelInfo:
     supports_negative_prompt: bool = True
     default_width: int = 512
     default_height: int = 512
-    tags: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     # ``gated`` models require accepting a license on the Hugging Face Hub and a
     # configured ``HUGGINGFACE_TOKEN``. Surfaced to the UI so users aren't met
     # with an opaque 401 at generation time.
@@ -33,7 +33,7 @@ class ModelInfo:
 
 
 # CLAUDE: add new curated models here — append ModelInfo entries
-MODEL_REGISTRY: List[ModelInfo] = [
+MODEL_REGISTRY: list[ModelInfo] = [
     ModelInfo(
         id="sd15",
         name="Stable Diffusion 1.5",
@@ -138,11 +138,11 @@ def register_model(model: ModelInfo, *, overwrite: bool = False) -> None:
     MODEL_REGISTRY[:] = [m for m in MODEL_REGISTRY if m.id != model.id] + [model]
 
 
-def get_model(model_id: str) -> Optional[ModelInfo]:
+def get_model(model_id: str) -> ModelInfo | None:
     return MODEL_REGISTRY_MAP.get(model_id)
 
 
-def get_compatible_models(vram_mb: int) -> List[ModelInfo]:
+def get_compatible_models(vram_mb: int) -> list[ModelInfo]:
     """Models whose minimum memory footprint fits the given budget.
 
     A budget of 0 (CPU-only / undetected) still returns models that can run with
@@ -153,7 +153,7 @@ def get_compatible_models(vram_mb: int) -> List[ModelInfo]:
     return [m for m in MODEL_REGISTRY if m.min_vram_mb <= vram_mb]
 
 
-def curated_models() -> List[ModelInfo]:
+def curated_models() -> list[ModelInfo]:
     """Recommended models, in curated (recommended-first) order."""
     return list(MODEL_REGISTRY)
 
@@ -170,7 +170,7 @@ class ResolvedModel(NamedTuple):
     supports_negative_prompt: bool
 
 
-async def resolve_model(model_id: str, db) -> Optional[ResolvedModel]:
+async def resolve_model(model_id: str, db) -> ResolvedModel | None:
     """Resolve a model_id to its repo_id + metadata.
 
     Looks up curated models first, then the DiffusionModel table for

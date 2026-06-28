@@ -35,9 +35,8 @@ def test_image_ws_rejects_wrong_token(client, monkeypatch):
     """When API_TOKEN is set, a wrong token closes with 1008."""
     import core.security as sec
     monkeypatch.setattr(sec, "ws_token_ok", lambda t: False)
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws/image/job-xyz"):
-            pass
+    with pytest.raises(Exception), client.websocket_connect("/ws/image/job-xyz"):
+        pass
 
 
 # ── /ws/agent/{session_id} ───────────────────────────────────────────────────
@@ -77,9 +76,8 @@ def test_agent_ws_rejects_wrong_token(client, monkeypatch):
     """Bad token closes the agent WS with 1008."""
     import core.security as sec
     monkeypatch.setattr(sec, "ws_token_ok", lambda t: False)
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws/agent/any-session"):
-            pass
+    with pytest.raises(Exception), client.websocket_connect("/ws/agent/any-session"):
+        pass
 
 
 # ── /ws/training/{run_id} (passive subscribe channel) ───────────────────────

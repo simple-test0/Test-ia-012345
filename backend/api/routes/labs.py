@@ -4,23 +4,23 @@ import queue as _queue
 import threading
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from core.config import settings
-from core.database import AsyncSessionLocal, get_db
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from hardware.detector import detect_hardware
-from models.dataset import Dataset
-from models.training_run import TrainingRun
 from pydantic import BaseModel
-from services.labs.architecture_registry import get_arch, list_archs
-from services.labs.exporter import export_model
-from services.labs.trainer import training_manager
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.websockets.manager import ws_manager
+from core.config import settings
+from core.database import AsyncSessionLocal, get_db
+from hardware.detector import detect_hardware
+from models.dataset import Dataset
+from models.training_run import TrainingRun
+from services.labs.architecture_registry import get_arch, list_archs
+from services.labs.exporter import export_model
+from services.labs.trainer import training_manager
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +42,9 @@ def _spawn(coro) -> asyncio.Task:
 def _launch_training(
     run_id: str,
     arch_id: str,
-    arch_config: Dict[str, Any],
-    training_config: Dict[str, Any],
-    dataset_path: Optional[str],
+    arch_config: dict[str, Any],
+    training_config: dict[str, Any],
+    dataset_path: str | None,
     checkpoint_dir: str,
 ) -> None:
     """Start the training subprocess and pump its metric queue to the WS + DB.
@@ -193,7 +193,7 @@ async def download_hf_dataset(req: HFDatasetRequest, db: AsyncSession = Depends(
 async def upload_dataset(
     name: str = Form(...),
     task_type: str = Form("classification"),
-    files: List[UploadFile] = File(...),
+    files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
     from services.labs.dataset_manager import process_upload
@@ -235,9 +235,9 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
 class CreateRunRequest(BaseModel):
     name: str
     architecture: str
-    arch_config: Dict[str, Any]
-    training_config: Dict[str, Any]
-    dataset_id: Optional[str] = None
+    arch_config: dict[str, Any]
+    training_config: dict[str, Any]
+    dataset_id: str | None = None
 
 
 @router.get("/runs")
@@ -309,12 +309,12 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
 
 
 class FinetuneRequest(BaseModel):
-    name: Optional[str] = None
-    dataset_id: Optional[str] = None
-    epochs: Optional[int] = None
-    learning_rate: Optional[float] = None
-    freeze_backbone: Optional[bool] = None
-    training_config: Optional[Dict[str, Any]] = None
+    name: str | None = None
+    dataset_id: str | None = None
+    epochs: int | None = None
+    learning_rate: float | None = None
+    freeze_backbone: bool | None = None
+    training_config: dict[str, Any] | None = None
 
 
 @router.post("/runs/{run_id}/finetune")
@@ -334,7 +334,7 @@ async def finetune_run(run_id: str, req: FinetuneRequest, db: AsyncSession = Dep
     # Build the child training config: parent's settings, then fine-tuning
     # defaults, then explicit overrides.
     parent_lr = float(parent.training_config.get("learning_rate", 3e-4))
-    tcfg: Dict[str, Any] = dict(parent.training_config or {})
+    tcfg: dict[str, Any] = dict(parent.training_config or {})
     tcfg.update(req.training_config or {})
     tcfg["init_from"] = parent.best_checkpoint_path
     tcfg["learning_rate"] = req.learning_rate if req.learning_rate is not None else parent_lr * 0.1
