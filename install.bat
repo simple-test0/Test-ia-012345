@@ -16,29 +16,47 @@ echo === AI Studio - Installation ===
 echo.
 
 REM ------------------------------------------------------------
-REM  1) Python 3.11+
+REM  1) Python 3.11 ou 3.12 (torch 2.4.1+cu121 n'existe PAS pour 3.13+)
 REM ------------------------------------------------------------
-where python >nul 2>&1
-if errorlevel 1 (
-  echo [setup] Python introuvable. Installation via winget...
+REM  On cherche un interpreteur COMPATIBLE via le lanceur "py".
+REM  PYCMD contiendra la commande a utiliser pour creer le venv.
+set "PYCMD="
+py -3.11 --version >nul 2>&1
+if not errorlevel 1 set "PYCMD=py -3.11"
+if not defined PYCMD (
+  py -3.12 --version >nul 2>&1
+  if not errorlevel 1 set "PYCMD=py -3.12"
+)
+
+REM  Repli: un "python" sur le PATH dont la version majeure.mineure est 3.11 ou 3.12
+if not defined PYCMD (
+  for /f "tokens=2" %%v in ('python --version 2^>^&1') do set "PYVER=%%v"
+  for /f "tokens=1,2 delims=." %%a in ("!PYVER!") do (
+    if "%%a.%%b"=="3.11" set "PYCMD=python"
+    if "%%a.%%b"=="3.12" set "PYCMD=python"
+  )
+)
+
+if not defined PYCMD (
+  echo [setup] Aucun Python 3.11/3.12 compatible trouve ^(torch CUDA ne supporte pas 3.13+^).
+  echo [setup] Installation de Python 3.11 via winget...
   where winget >nul 2>&1
   if errorlevel 1 (
     echo ERREUR: winget n'est pas disponible.
-    echo Installe Python 3.11+ manuellement depuis https://www.python.org/downloads/
+    echo Installe Python 3.11 manuellement depuis https://www.python.org/downloads/release/python-3119/
     echo  ^(coche "Add python.exe to PATH"^) puis relance install.bat.
     pause
     exit /b 1
   )
   winget install -e --id Python.Python.3.11 --accept-source-agreements --accept-package-agreements
   echo.
-  echo [setup] Python installe. FERME puis ROUVRE ce terminal et relance install.bat
-  echo         pour que le PATH soit mis a jour.
+  echo [setup] Python 3.11 installe. FERME puis ROUVRE ce terminal et relance install.bat.
   pause
   exit /b 0
 )
 
-for /f "tokens=2" %%v in ('python --version 2^>^&1') do set "PYVER=%%v"
-echo [backend] Python !PYVER! detecte.
+for /f "tokens=2" %%v in ('%PYCMD% --version 2^>^&1') do set "PYVER=%%v"
+echo [backend] Python !PYVER! utilise pour le venv ^(commande: %PYCMD%^).
 
 REM ------------------------------------------------------------
 REM  2) Node.js 20+
@@ -68,9 +86,24 @@ echo.
 REM ------------------------------------------------------------
 REM  3) Environnement virtuel + dependances backend (CUDA 12.1)
 REM ------------------------------------------------------------
+REM  Si un venv existe deja, verifier qu'il est en 3.11/3.12 ; sinon le recreer.
+if exist "%BACKEND%\.venv\Scripts\python.exe" (
+  set "VENV_OK="
+  for /f "tokens=2" %%v in ('"%BACKEND%\.venv\Scripts\python.exe" --version 2^>^&1') do (
+    for /f "tokens=1,2 delims=." %%a in ("%%v") do (
+      if "%%a.%%b"=="3.11" set "VENV_OK=1"
+      if "%%a.%%b"=="3.12" set "VENV_OK=1"
+    )
+  )
+  if not defined VENV_OK (
+    echo [backend] venv existant incompatible ^(mauvaise version Python^) : recreation...
+    rmdir /s /q "%BACKEND%\.venv"
+  )
+)
+
 if not exist "%BACKEND%\.venv" (
-  echo [backend] Creation de l'environnement virtuel...
-  python -m venv "%BACKEND%\.venv"
+  echo [backend] Creation de l'environnement virtuel avec %PYCMD%...
+  %PYCMD% -m venv "%BACKEND%\.venv"
   if errorlevel 1 (
     echo ERREUR: impossible de creer le venv.
     pause
