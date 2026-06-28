@@ -49,8 +49,9 @@ Run `MODE=prod ./start.sh` to start the backend without auto-reload.
 Sur une machine Windows neuve (rien d'installé), double-cliquez sur :
 
 ```bat
-install.bat   :: installe Python 3.11+ et Node 20+ (via winget) si besoin,
-              :: crée le venv, installe les deps backend (torch CUDA 12.1) + frontend, crée .env
+install.bat   :: installe Python 3.11+, Node 20+ et Ollama (via winget) si besoin,
+              :: crée le venv, installe les deps backend (torch CUDA 12.1) + frontend, crée .env,
+              :: et télécharge le modèle Ollama par défaut (llama3.2) pour l'onglet Agent
 start.bat     :: démarre le backend (http://localhost:8000) et le frontend (http://localhost:5173)
 ```
 

@@ -112,11 +112,42 @@ if errorlevel 1 (
 popd
 echo.
 
+REM ------------------------------------------------------------
+REM  5) Ollama (onglet Agent) + modele par defaut
+REM ------------------------------------------------------------
+where ollama >nul 2>&1
+if errorlevel 1 (
+  echo [ollama] Ollama introuvable. Installation via winget...
+  where winget >nul 2>&1
+  if errorlevel 1 (
+    echo [warn] winget indisponible : installe Ollama manuellement depuis https://ollama.com
+    echo        ^(l'onglet Agent restera indisponible jusque-la^).
+    goto :after_ollama
+  )
+  winget install -e --id Ollama.Ollama --accept-source-agreements --accept-package-agreements
+  echo.
+  echo [ollama] Ollama installe. Si la commande "ollama" n'est pas encore reconnue,
+  echo          ferme/rouvre le terminal puis relance install.bat pour telecharger le modele.
+) else (
+  echo [ollama] Ollama deja installe.
+)
+
+REM Telecharger un modele par defaut pour l'agent (si ollama est utilisable)
+where ollama >nul 2>&1
+if not errorlevel 1 (
+  echo [ollama] Telechargement du modele par defaut "llama3.2" ^(peut etre long^)...
+  ollama pull llama3.2
+  if errorlevel 1 (
+    echo [warn] Echec du telechargement du modele. Tu pourras reessayer plus tard avec:
+    echo        ollama pull llama3.2
+  )
+)
+:after_ollama
+echo.
+
 echo ============================================================
 echo  Installation terminee !
 echo  Lance "start.bat" pour demarrer AI Studio.
-echo.
-echo  Optionnel: installe Ollama ^(https://ollama.com^) pour l'onglet Agent.
 echo ============================================================
 pause
 endlocal
