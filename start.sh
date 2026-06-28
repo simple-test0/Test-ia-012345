@@ -40,6 +40,12 @@ if [ ! -d "$FRONTEND/node_modules" ]; then
   cd "$FRONTEND" && npm install && cd "$ROOT"
 fi
 
+# First-run hardware optimisation (writes backend/.env).
+if [ ! -f "$BACKEND/.env" ]; then
+  echo "[optimize] First run — tuning to your hardware..."
+  python "$ROOT/scripts/optimize.py" || true
+fi
+
 # Warn if Ollama (used by the agent) isn't reachable.
 OLLAMA_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
 if ! curl -sf "$OLLAMA_URL/api/tags" >/dev/null 2>&1; then

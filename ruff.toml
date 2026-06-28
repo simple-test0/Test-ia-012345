@@ -1,0 +1,14 @@
+# Ruff configuration for the AI Studio backend.
+line-length = 110
+target-version = "py310"
+
+[lint]
+select = ["E9", "F", "B", "SIM", "RUF", "I"]
+# B008: function calls in argument defaults — this is the idiomatic FastAPI
+#       pattern (Depends(), File(), Form()), not a bug.
+ignore = ["B008"]
+
+[lint.per-file-ignores]
+# Routers/websockets are imported after app creation on purpose (E402), and the
+# tool modules are imported for their registration side effects (F401).
+"backend/main.py" = ["E402", "F401"]

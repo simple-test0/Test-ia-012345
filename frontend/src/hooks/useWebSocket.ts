@@ -12,6 +12,8 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onMessageRef = useRef(onMessage)
   onMessageRef.current = onMessage
+  // Set during teardown so a socket we close ourselves never schedules a reconnect.
+  const closingRef = useRef(false)
 
   const connect = useCallback(() => {
     if (!url || !enabled) return
@@ -21,8 +23,11 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
     wsRef.current = ws
 
     ws.onopen = () => setConnected(true)
-    ws.onclose = () => {
+    ws.onclose = (evt) => {
       setConnected(false)
+      // No reconnect if we're tearing down, the consumer is disabled, or the
+      // server closed cleanly (code 1000).
+      if (closingRef.current || !enabled || evt.code === 1000) return
       reconnectTimeout.current = setTimeout(connect, 2000)
     }
     ws.onerror = () => ws.close()
@@ -37,8 +42,10 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
   }, [url, enabled])
 
   useEffect(() => {
+    closingRef.current = false
     connect()
     return () => {
+      closingRef.current = true
       if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current)
       wsRef.current?.close()
     }

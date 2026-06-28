@@ -1,10 +1,9 @@
 import uuid
 from datetime import datetime
 
+from core.database import Base
 from sqlalchemy import JSON, DateTime, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
-
-from core.database import Base
 
 
 class AgentSession(Base):

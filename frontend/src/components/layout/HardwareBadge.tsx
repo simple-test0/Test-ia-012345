@@ -12,18 +12,30 @@ export default function HardwareBadge() {
   const primaryGpu = gpus[0]
   const ramUsedMb = hardware.ram_used_mb as number
   const ramTotalMb = hardware.ram_total_mb as number
-  const ramPct = Math.round((ramUsedMb / ramTotalMb) * 100)
+  const ramPct = ramTotalMb ? Math.round((ramUsedMb / ramTotalMb) * 100) : 0
+  const backend = ((hardware.accelerator_backend as string) || 'cpu').toUpperCase()
+  const unified = primaryGpu ? (primaryGpu.is_unified_memory as boolean) : false
 
   return (
     <div className="flex items-center gap-3 text-xs text-gray-400">
-      {primaryGpu && (
+      <span className="rounded bg-gray-800 px-1.5 py-0.5 font-mono text-[10px] text-purple-300">
+        {backend}
+      </span>
+      {primaryGpu ? (
         <span className="flex items-center gap-1">
           <Cpu size={12} className="text-purple-400" />
           {primaryGpu.name as string} —{' '}
           <span className="text-emerald-400">
             {primaryGpu.vram_used_mb as number}
-            <span className="text-gray-600">/{primaryGpu.vram_total_mb as number} MB</span>
+            <span className="text-gray-600">
+              /{primaryGpu.vram_total_mb as number} MB{unified ? ' (unified)' : ''}
+            </span>
           </span>
+        </span>
+      ) : (
+        <span className="flex items-center gap-1">
+          <Cpu size={12} className="text-purple-400" />
+          {(hardware.cpu as Record<string, unknown> | null)?.name as string || 'CPU'}
         </span>
       )}
       <span className="flex items-center gap-1">

@@ -24,9 +24,17 @@ async def export_model(
         if spec is None:
             raise ValueError(f"Unknown architecture: {arch_id}")
 
-        model = spec.builder(arch_config)
+        build_config = dict(arch_config)
+        if arch_id == "pretrained":
+            # The checkpoint already holds the full state — skip the ImageNet
+            # download and don't freeze, so every tensor loads cleanly.
+            build_config["pretrained"] = False
+            build_config["freeze_backbone"] = False
+
+        model = spec.builder(build_config)
         ckpt = torch.load(checkpoint_path, map_location="cpu")
-        model.load_state_dict(ckpt["model_state"])
+        state = ckpt.get("model_state", ckpt) if isinstance(ckpt, dict) else ckpt
+        model.load_state_dict(state, strict=False)
         model.eval()
 
         out_dir = Path(output_dir)
@@ -48,6 +56,7 @@ async def export_model(
 
         elif export_format == "safetensors":
             from safetensors.torch import save_file
+
             out_path = str(out_dir / "model.safetensors")
             tensors = {k: v.contiguous() for k, v in model.state_dict().items()}
             save_file(tensors, out_path)

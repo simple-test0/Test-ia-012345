@@ -10,7 +10,11 @@ from services.agent.tool_registry import register_tool
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "The search query"},
-            "max_results": {"type": "integer", "description": "Number of results to return (default 5)", "default": 5},
+            "max_results": {
+                "type": "integer",
+                "description": "Number of results to return (default 5)",
+                "default": 5,
+            },
         },
         "required": ["query"],
     },
