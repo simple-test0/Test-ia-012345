@@ -167,6 +167,8 @@ export default function AgentPage() {
   // Models & tools
   const [models, setModels] = useState<OllamaModel[]>([])
   const [ollamaAvailable, setOllamaAvailable] = useState(true)
+  // Reachable but no models pulled yet — distinct from "not reachable".
+  const [ollamaNoModels, setOllamaNoModels] = useState(false)
   const [selectedModel, setSelectedModel] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [tools, setTools] = useState<AgentTool[]>([])
@@ -187,16 +189,22 @@ export default function AgentPage() {
       .then((data: Session[]) => setSessions(data))
       .catch(() => {})
 
+    // Backend returns { available: boolean, models: string[] } — not an array.
     getOllamaModels()
-      .then((data: OllamaModel[]) => {
-        if (data.length === 0) {
-          setOllamaAvailable(false)
-        } else {
-          setModels(data)
-          setSelectedModel(data[0].id)
+      .then((data: { available: boolean; models: string[] }) => {
+        const names = data?.models ?? []
+        setOllamaAvailable(!!data?.available)
+        setOllamaNoModels(!!data?.available && names.length === 0)
+        if (names.length > 0) {
+          const mapped = names.map((name) => ({ id: name, name }))
+          setModels(mapped)
+          setSelectedModel(mapped[0].id)
         }
       })
-      .catch(() => setOllamaAvailable(false))
+      .catch(() => {
+        setOllamaAvailable(false)
+        setOllamaNoModels(false)
+      })
 
     getTools()
       .then((data: AgentTool[]) => setTools(data))
@@ -400,7 +408,16 @@ export default function AgentPage() {
             <div className="flex items-start gap-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 p-2">
               <AlertTriangle className="h-3.5 w-3.5 text-yellow-400 shrink-0 mt-0.5" />
               <p className="text-[10px] text-yellow-300 leading-snug">
-                Ollama not detected — install it to use agents
+                Ollama non détecté — démarrez-le (<span className="font-mono">ollama serve</span>) ou installez-le pour utiliser les agents.
+              </p>
+            </div>
+          )}
+
+          {ollamaAvailable && ollamaNoModels && (
+            <div className="flex items-start gap-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 p-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-yellow-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-yellow-300 leading-snug">
+                Ollama détecté, mais aucun modèle installé — exécutez <span className="font-mono">ollama pull llama3.2</span>.
               </p>
             </div>
           )}
