@@ -44,6 +44,19 @@ This creates a Python venv, installs deps, and starts:
 
 Run `MODE=prod ./start.sh` to start the backend without auto-reload.
 
+### Windows (NVIDIA RTX)
+
+Sur une machine Windows neuve (rien d'installé), double-cliquez sur :
+
+```bat
+install.bat   :: installe Python 3.11+ et Node 20+ (via winget) si besoin,
+              :: crée le venv, installe les deps backend (torch CUDA 12.1) + frontend, crée .env
+start.bat     :: démarre le backend (http://localhost:8000) et le frontend (http://localhost:5173)
+```
+
+`install.bat` est à lancer une seule fois. Si Python ou Node viennent d'être installés,
+fermez puis rouvrez le terminal et relancez `install.bat` (mise à jour du PATH).
+
 ### Manual
 
 ```bash
