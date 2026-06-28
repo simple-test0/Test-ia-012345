@@ -7,9 +7,7 @@ from typing import Optional
 
 from api.websockets.manager import ws_manager
 from core.config import settings
-
-from services.image_gen.model_registry import get_model
-from services.image_gen.pipeline_manager import apply_sampler, image_to_base64, pipeline_manager
+from services.image_gen.pipeline_manager import apply_sampler, image_to_data_url, pipeline_manager
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +39,10 @@ class GenerationWorker:
         await ws_manager.send(job_id, {"type": "started", "job_id": job_id})
 
         # DB update — import here to avoid circular at module load
+        from sqlalchemy import select
+
         from core.database import AsyncSessionLocal
         from models.image_job import ImageJob
-        from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(ImageJob).where(ImageJob.id == job_id))
@@ -55,38 +54,30 @@ class GenerationWorker:
         start_ms = int(time.time() * 1000)
         output_paths = []
         error_msg = None
+        pipe = None
 
         try:
             pipe = await pipeline_manager.get_pipeline(model_id, repo_id)
-            spec = get_model(model_id)
-            apply_sampler(pipe, job.get("sampler", ""), spec.family if spec else "")
+            if job.get("sampler"):
+                apply_sampler(pipe, job["sampler"])
+            lora = job.get("lora")
+            if lora and hasattr(pipe, "load_lora_weights"):
+                try:
+                    pipe.load_lora_weights(lora)
+                    logger.info(f"Loaded LoRA {lora}")
+                except Exception as exc:
+                    logger.warning(f"Could not load LoRA {lora}: {exc}")
             loop = self._loop
             step_data = {"current": 0}
-
-            # Live previews are expensive (a VAE decode per shown step). Skip them
-            # entirely on CPU and throttle to a handful per run elsewhere so small
-            # configs stay responsive.
-            from hardware.detector import detect_hardware
-
-            backend = detect_hardware().accelerator_backend
-            total_steps = max(1, int(job["steps"]))
-            preview_enabled = settings.enable_live_preview and backend != "cpu"
-            preview_interval = max(1, total_steps // 8)
 
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 step_data["current"] = step_index + 1
                 latents = callback_kwargs.get("latents")
                 preview_b64 = None
 
-                show_preview = (
-                    preview_enabled
-                    and latents is not None
-                    and (step_index % preview_interval == 0 or step_data["current"] >= total_steps)
-                )
-                if show_preview:
+                if latents is not None:
                     try:
                         import torch
-
                         with torch.no_grad():
                             decoded = pipeline.vae.decode(
                                 latents / pipeline.vae.config.scaling_factor, return_dict=False
@@ -95,23 +86,19 @@ class GenerationWorker:
                             decoded = decoded.cpu().permute(0, 2, 3, 1).float().numpy()
                             import numpy as np
                             from PIL import Image
-
                             img = Image.fromarray((decoded[0] * 255).astype(np.uint8))
                             img.thumbnail((256, 256))
-                            preview_b64 = image_to_base64(img)
-                    except Exception:
-                        logger.debug("Live preview decode failed at step %d", step_index, exc_info=True)
+                            preview_b64 = image_to_data_url(img, "JPEG")
+                    except Exception as exc:
+                        logger.debug(f"Step preview decode failed: {exc}")
 
                 asyncio.run_coroutine_threadsafe(
-                    ws_manager.send(
-                        job_id,
-                        {
-                            "type": "step",
-                            "step": step_data["current"],
-                            "total": job["steps"],
-                            "preview": preview_b64,
-                        },
-                    ),
+                    ws_manager.send(job_id, {
+                        "type": "step",
+                        "step": step_data["current"],
+                        "total_steps": job["steps"],
+                        "preview": preview_b64,
+                    }),
                     loop,
                 )
                 return callback_kwargs
@@ -121,10 +108,7 @@ class GenerationWorker:
                 seed = random.randint(0, 2**32 - 1)
 
             import torch
-
-            # A CPU generator is portable across CUDA/ROCm/XPU/MPS/CPU and keeps
-            # seeds reproducible even when components are offloaded between devices.
-            generator = torch.Generator(device="cpu")
+            generator = torch.Generator(device="cuda" if torch.cuda.is_available() else "cpu")
             generator.manual_seed(seed)
 
             generate_kwargs = dict(
@@ -142,7 +126,9 @@ class GenerationWorker:
             if job.get("cfg_scale", 7.5) > 0:
                 generate_kwargs["guidance_scale"] = job["cfg_scale"]
 
-            result = await asyncio.get_event_loop().run_in_executor(None, lambda: pipe(**generate_kwargs))
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: pipe(**generate_kwargs)
+            )
             images = result.images
 
             settings.images_dir.mkdir(parents=True, exist_ok=True)
@@ -155,6 +141,14 @@ class GenerationWorker:
         except Exception as exc:
             error_msg = str(exc)
             logger.exception(f"Generation failed for job {job_id}")
+        finally:
+            # Pipelines are cached/reused — remove any LoRA so it doesn't leak
+            # into the next job.
+            if job.get("lora") and pipe is not None:
+                try:
+                    pipe.unload_lora_weights()
+                except Exception:
+                    pass
 
         duration_ms = int(time.time() * 1000) - start_ms
         status = "completed" if not error_msg else "failed"
@@ -164,11 +158,9 @@ class GenerationWorker:
         for p in output_paths:
             try:
                 from PIL import Image as PILImage
-
                 img = PILImage.open(p)
-                image_b64s.append(image_to_base64(img, "PNG"))
+                image_b64s.append(image_to_data_url(img, "PNG"))
             except Exception:
-                logger.warning("Could not encode result image %s", p, exc_info=True)
                 image_b64s.append(None)
 
         async with AsyncSessionLocal() as db:
@@ -185,14 +177,12 @@ class GenerationWorker:
         if error_msg:
             await ws_manager.send(job_id, {"type": "error", "message": error_msg})
         else:
-            await ws_manager.send(
-                job_id,
-                {
-                    "type": "completed",
-                    "job_id": job_id,
-                    "image_paths": output_paths,
-                    "images_b64": image_b64s,
-                    "duration_ms": duration_ms,
-                    "seed": seed,
-                },
-            )
+            await ws_manager.send(job_id, {
+                "type": "completed",
+                "job_id": job_id,
+                "image_paths": output_paths,
+                # `images` is the key the frontend consumes (base64 PNGs).
+                "images": image_b64s,
+                "duration_ms": duration_ms,
+                "seed": seed,
+            })

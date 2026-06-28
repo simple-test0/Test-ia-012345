@@ -7,20 +7,21 @@ hardware and the recommender. Loaded pipelines are cached LRU-style up to
 instead of re-loading from disk.
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import io
 import logging
 from collections import OrderedDict
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from core.config import settings
-from hardware.detector import (
-    detect_hardware,
-    empty_accelerator_cache,
-)
+from hardware.detector import detect_hardware, empty_accelerator_cache
 from hardware.recommender import recommend
-from PIL import Image
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,12 @@
 import api from './client'
 
-export const getOllamaModels = () => api.get('/agent/models').then(r => r.data)
+export interface OllamaModelsResponse {
+  available: boolean
+  models: string[]
+}
+
+export const getOllamaModels = (): Promise<OllamaModelsResponse> =>
+  api.get('/agent/models').then(r => r.data)
 export const getTools = () => api.get('/agent/tools').then(r => r.data)
 export const getSessions = () => api.get('/agent/sessions').then(r => r.data)
 export const getSession = (id: string) => api.get(`/agent/sessions/${id}`).then(r => r.data)

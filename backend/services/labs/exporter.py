@@ -18,10 +18,9 @@ async def export_model(
     def _export() -> str:
         import torch
 
-        from services.labs.architecture_registry import get_arch
+        from services.labs.architecture_registry import build_model, get_arch
 
-        spec = get_arch(arch_id)
-        if spec is None:
+        if get_arch(arch_id) is None:
             raise ValueError(f"Unknown architecture: {arch_id}")
 
         build_config = dict(arch_config)
@@ -31,7 +30,7 @@ async def export_model(
             build_config["pretrained"] = False
             build_config["freeze_backbone"] = False
 
-        model = spec.builder(build_config)
+        model = build_model(arch_id, build_config)
         ckpt = torch.load(checkpoint_path, map_location="cpu")
         state = ckpt.get("model_state", ckpt) if isinstance(ckpt, dict) else ckpt
         model.load_state_dict(state, strict=False)
