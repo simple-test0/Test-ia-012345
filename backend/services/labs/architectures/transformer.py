@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -35,7 +35,7 @@ class TransformerLanguageModel(nn.Module):
         self.max_seq_len = max_seq_len
 
     def forward(self, x):
-        B, T = x.shape
+        _, T = x.shape
         positions = torch.arange(T, device=x.device).unsqueeze(0)
         emb = self.dropout(self.token_emb(x) + self.pos_emb(positions))
         out = self.transformer(emb)
@@ -43,7 +43,7 @@ class TransformerLanguageModel(nn.Module):
         return self.head(out[:, -1, :])
 
 
-def build_transformer(config: Dict[str, Any]) -> nn.Module:
+def build_transformer(config: dict[str, Any]) -> nn.Module:
     return TransformerLanguageModel(
         vocab_size=config.get("vocab_size", 50257),
         n_embd=config.get("n_embd", 256),

@@ -1,7 +1,11 @@
+import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -51,8 +55,14 @@ async def get_db():
         try:
             yield session
             await session.commit()
-        except Exception:
+        except Exception as exc:
             await session.rollback()
+            # HTTPException is normal request control flow (404/422/…), not a DB
+            # failure — don't spam the log with a traceback for it.
+            from starlette.exceptions import HTTPException
+
+            if not isinstance(exc, HTTPException):
+                logger.warning("DB session rolled back due to error", exc_info=True)
             raise
         finally:
             await session.close()

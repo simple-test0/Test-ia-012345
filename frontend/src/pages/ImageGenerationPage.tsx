@@ -1,23 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, ImageIcon, ChevronDown, Plus } from 'lucide-react'
-import { generateImage, getModels, getJobs, getHFModelStatus } from '../api/image'
+import { Loader2, ImageIcon, ChevronDown, Lock, AlertTriangle } from 'lucide-react'
+import { generateImage, getModels, getJobs } from '../api/image'
+import { useHardwareInfo } from '../hooks/useHardwareInfo'
 import { useWebSocket } from '../hooks/useWebSocket'
-import { wsUrl } from '../api/client'
-import HFModelBrowser from '../components/image/HFModelBrowser'
-import { toast } from '../components/ui/toast'
+import { WS_BASE } from '../api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface ImageModel {
   id: string
   name: string
-  source: 'curated' | 'downloaded'
-  recommended: boolean
-  status: 'ready' | 'downloading' | 'error'
+  description: string
+  min_vram_mb: number
+  recommended_steps: number
+  default_cfg: number
+  default_width: number
+  default_height: number
+  tags: string[]
+  family: string
+  gated: boolean
   compatible: boolean
-  repo_id: string
-  tags?: string[]
-  gated?: boolean
 }
 
 interface ImageJob {
@@ -40,32 +42,31 @@ interface GenerateParams {
   height: number
   seed: number
   num_images: number
-  lora?: string
 }
 
 interface WsStepEvent {
   type: 'step'
   step: number
-  total_steps: number
-  preview?: string // base64
+  total: number
+  preview?: string | null // base64
 }
 
 interface WsCompletedEvent {
   type: 'completed'
-  images: string[] // base64
+  images_b64: (string | null)[] // base64
 }
 
-interface WsQueueEvent {
-  type: 'queued'
-  position: number
+interface WsErrorEvent {
+  type: 'error'
+  message: string
 }
 
-type WsEvent = WsStepEvent | WsCompletedEvent | WsQueueEvent
+type WsEvent = WsStepEvent | WsCompletedEvent | WsErrorEvent
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const SAMPLERS = ['DPM++ 2M', 'Euler', 'Euler a', 'DDIM', 'LMS']
-const PIXEL_SIZES = [512, 768, 1024]
+const ALL_PIXEL_SIZES = [256, 384, 512, 768, 1024, 1536, 2048]
 const NUM_IMAGES_OPTIONS = [1, 2, 3, 4]
 
 const STATUS_COLORS: Record<ImageJob['status'], string> = {
@@ -80,24 +81,29 @@ const STATUS_COLORS: Record<ImageJob['status'], string> = {
 interface ActiveJobProgressProps {
   jobId: string
   onCompleted: (images: string[]) => void
+  onFailed: () => void
 }
 
-function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
+function ActiveJobProgress({ jobId, onCompleted, onFailed }: ActiveJobProgressProps) {
   const [step, setStep] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
   const [preview, setPreview] = useState<string | null>(null)
   const onCompletedRef = useRef(onCompleted)
   onCompletedRef.current = onCompleted
+  const onFailedRef = useRef(onFailed)
+  onFailedRef.current = onFailed
 
-  useWebSocket(wsUrl(`/ws/image/${jobId}`), {
+  useWebSocket(`${WS_BASE}/ws/image/${jobId}`, {
     onMessage: (raw) => {
       const evt = raw as WsEvent
       if (evt.type === 'step') {
         setStep(evt.step)
-        setTotalSteps(evt.total_steps)
+        setTotalSteps(evt.total)
         if (evt.preview) setPreview(evt.preview)
       } else if (evt.type === 'completed') {
-        onCompletedRef.current(evt.images)
+        onCompletedRef.current((evt.images_b64 || []).filter((x): x is string => Boolean(x)))
+      } else if (evt.type === 'error') {
+        onFailedRef.current()
       }
     },
   })
@@ -118,7 +124,7 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
       </div>
       {preview && (
         <img
-          src={preview}
+          src={`data:image/png;base64,${preview}`}
           alt="Latent preview"
           className="mt-2 w-full rounded-lg object-contain opacity-80"
         />
@@ -132,9 +138,11 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
 interface JobCardProps {
   job: ImageJob
   onJobCompleted: (jobId: string, images: string[]) => void
+  onJobFailed: (jobId: string) => void
 }
 
-function JobCard({ job, onJobCompleted }: JobCardProps) {
+function JobCard({ job, onJobCompleted, onJobFailed }: JobCardProps) {
+  const isActive = job.status === 'running' || job.status === 'queued'
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
@@ -144,10 +152,11 @@ function JobCard({ job, onJobCompleted }: JobCardProps) {
         </span>
       </div>
 
-      {job.status === 'running' && (
+      {isActive && (
         <ActiveJobProgress
           jobId={job.job_id}
           onCompleted={(images) => onJobCompleted(job.job_id, images)}
+          onFailed={() => onJobFailed(job.job_id)}
         />
       )}
 
@@ -156,7 +165,7 @@ function JobCard({ job, onJobCompleted }: JobCardProps) {
           {job.images.map((img, i) => (
             <img
               key={i}
-              src={img}
+              src={`data:image/png;base64,${img}`}
               alt={`Generated ${i + 1}`}
               className="w-full rounded-lg object-cover aspect-square"
             />
@@ -198,7 +207,6 @@ export default function ImageGenerationPage() {
   const [height, setHeight] = useState(512)
   const [seed, setSeed] = useState(-1)
   const [numImages, setNumImages] = useState(1)
-  const [lora, setLora] = useState('')
 
   // UI state
   const [loading, setLoading] = useState(false)
@@ -206,87 +214,45 @@ export default function ImageGenerationPage() {
   const [jobs, setJobs] = useState<ImageJob[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Active job WS (for queue status on the newly submitted job)
-  const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  // Hardware-aware caps (so small configs aren't offered resolutions that OOM).
+  const { recommendations } = useHardwareInfo(10000)
+  const maxRes = (() => {
+    const ig = recommendations?.image_gen as Record<string, unknown> | undefined
+    const mr = ig?.max_resolution as number[] | undefined
+    return mr && mr.length === 2 ? Math.max(mr[0], mr[1]) : 1024
+  })()
+  const pixelSizes = ALL_PIXEL_SIZES.filter((s) => s <= maxRes)
 
-  // Hugging Face model browser + download tracking
-  const [showBrowser, setShowBrowser] = useState(false)
-  const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({})
+  // Apply a model's recommended defaults (steps / CFG / resolution).
+  const applyModelDefaults = (m: ImageModel) => {
+    setSteps(m.recommended_steps)
+    setCfgScale(m.default_cfg)
+    setWidth(Math.min(m.default_width, maxRes))
+    setHeight(Math.min(m.default_height, maxRes))
+  }
 
-  useWebSocket(activeJobId ? wsUrl(`/ws/image/${activeJobId}`) : null, {
-    onMessage: (raw) => {
-      const evt = raw as WsEvent
-      if (evt.type === 'queued') {
-        setQueuePosition(evt.position)
-      } else if (evt.type === 'completed') {
-        setQueuePosition(null)
-        setActiveJobId(null)
-      }
-    },
-  })
-
-  // Fetch models
-  const refreshModels = (autoSelect = false) =>
+  // Fetch models — default to the first hardware-compatible one.
+  useEffect(() => {
     getModels()
       .then((data: ImageModel[]) => {
-        setModels(data)
-        if (autoSelect && !selectedModel) {
-          const first = data.find((m) => m.status === 'ready')
-          if (first) setSelectedModel(first.id)
+        // Compatible models first, then the rest.
+        const sorted = [...data].sort((a, b) => Number(b.compatible) - Number(a.compatible))
+        setModels(sorted)
+        const first = sorted.find((m) => m.compatible) ?? sorted[0]
+        if (first) {
+          setSelectedModel(first.id)
+          applyModelDefaults(first)
         }
       })
       .catch(() => setError('Failed to load models'))
-
-  useEffect(() => {
-    refreshModels(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Poll status of in-progress HF model downloads.
-  useEffect(() => {
-    const ids = Object.keys(downloadingModels)
-    if (ids.length === 0) return
-    const interval = setInterval(() => {
-      ids.forEach((id) => {
-        getHFModelStatus(id)
-          .then((m: { status: string; progress?: number; error_message?: string }) => {
-            if (m.status === 'ready') {
-              setDownloadingModels((prev) => {
-                const next = { ...prev }
-                delete next[id]
-                return next
-              })
-              refreshModels()
-              toast.success('Modèle téléchargé et prêt à l\'emploi.')
-            } else if (m.status === 'error') {
-              setDownloadingModels((prev) => {
-                const next = { ...prev }
-                delete next[id]
-                return next
-              })
-              const msg = m.error_message || 'Le téléchargement du modèle a échoué.'
-              setError(msg)
-              toast.error(msg)
-            } else {
-              setDownloadingModels((prev) => ({ ...prev, [id]: m.progress ?? 0 }))
-            }
-          })
-          .catch(() => {})
-      })
-    }, 3000)
-    return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [downloadingModels])
-
-  const handleDownloadStarted = (modelId: string) => {
-    setDownloadingModels((prev) => ({ ...prev, [modelId]: 0 }))
-    refreshModels()
-  }
-
-  // Fetch job history
+  // Fetch job history. The list endpoint returns `id`; normalise to `job_id`
+  // (the field the POST response and the rest of this page use).
   useEffect(() => {
     getJobs()
-      .then((data: ImageJob[]) => setJobs(data))
+      .then((data: Array<ImageJob & { id?: string }>) =>
+        setJobs(data.map((j) => ({ ...j, job_id: j.job_id ?? j.id ?? '' }))))
       .catch(() => {})
   }, [])
 
@@ -307,7 +273,6 @@ export default function ImageGenerationPage() {
       height,
       seed,
       num_images: numImages,
-      lora: lora.trim() || undefined,
     }
 
     try {
@@ -320,18 +285,30 @@ export default function ImageGenerationPage() {
         queue_position: result.queue_position,
       }
       setJobs((prev) => [newJob, ...prev])
-      setActiveJobId(result.job_id)
-    } catch (e) {
-      setError('Generation failed. Please try again.')
+      if (typeof result.queue_size === 'number') setQueuePosition(result.queue_size)
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail || 'Generation failed. Please try again.')
     } finally {
       setLoading(false)
     }
   }
 
   const handleJobCompleted = (jobId: string, images: string[]) => {
+    setQueuePosition(null)
     setJobs((prev) =>
       prev.map((j) =>
         j.job_id === jobId ? { ...j, status: 'completed' as const, images } : j
+      )
+    )
+  }
+
+  const handleJobFailed = (jobId: string) => {
+    setQueuePosition(null)
+    setError('Generation failed. Please try again.')
+    setJobs((prev) =>
+      prev.map((j) =>
+        j.job_id === jobId ? { ...j, status: 'failed' as const } : j
       )
     )
   }
@@ -345,7 +322,7 @@ export default function ImageGenerationPage() {
           <label className="text-xs font-medium text-gray-400">Prompt</label>
           <textarea
             className="rounded-xl bg-gray-900 border border-gray-800 p-3 text-sm text-gray-100
-              resize-none h-28 focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
+              resize-none h-28 focus:outline-none focus:border-blue-500 transition-colors placeholder-gray-600"
             placeholder="Describe the image you want to generate..."
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
@@ -357,7 +334,7 @@ export default function ImageGenerationPage() {
           <label className="text-xs font-medium text-gray-400">Negative Prompt</label>
           <textarea
             className="rounded-xl bg-gray-900 border border-gray-800 p-3 text-sm text-gray-100
-              resize-none h-16 focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
+              resize-none h-16 focus:outline-none focus:border-blue-500 transition-colors placeholder-gray-600"
             placeholder="Things to avoid..."
             value={negativePrompt}
             onChange={(e) => setNegativePrompt(e.target.value)}
@@ -366,79 +343,57 @@ export default function ImageGenerationPage() {
 
         {/* Model Selector */}
         <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-medium text-gray-400">Model</label>
-            <button
-              type="button"
-              onClick={() => setShowBrowser(true)}
-              className="flex items-center gap-1 text-[11px] font-medium text-purple-400 hover:text-purple-300"
-            >
-              <Plus className="h-3 w-3" /> Ajouter un modèle
-            </button>
-          </div>
+          <label className="text-xs font-medium text-gray-400">Model</label>
           <div className="relative">
             <select
               className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-3 pr-8
                 text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
               value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
+              onChange={(e) => {
+                setSelectedModel(e.target.value)
+                const m = models.find((x) => x.id === e.target.value)
+                if (m) applyModelDefaults(m)
+              }}
             >
               {models.length === 0 && <option value="">No models found</option>}
-              {(() => {
-                const curated = models.filter((m) => m.source === 'curated')
-                const downloaded = models.filter((m) => m.source === 'downloaded')
-                const optionLabel = (m: ImageModel) => {
-                  let label = m.name
-                  if (m.status === 'downloading') label += ' (téléchargement…)'
-                  else if (m.status === 'error') label += ' (erreur)'
-                  else if (!m.compatible) label += ' — VRAM insuffisante'
-                  return label
-                }
-                return (
-                  <>
-                    {curated.length > 0 && (
-                      <optgroup label="Recommandés">
-                        {curated.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {optionLabel(m)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {downloaded.length > 0 && (
-                      <optgroup label="Téléchargés">
-                        {downloaded.map((m) => (
-                          <option key={m.id} value={m.id} disabled={m.status !== 'ready'}>
-                            {optionLabel(m)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </>
-                )
-              })()}
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}{m.compatible ? '' : ' — needs more VRAM'}{m.gated ? ' 🔒' : ''}
+                </option>
+              ))}
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-gray-500" />
           </div>
-          {Object.keys(downloadingModels).length > 0 && (() => {
-            const vals = Object.values(downloadingModels)
-            const avg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)
-            return (
-              <span className="flex items-center gap-1.5 self-start rounded-full bg-purple-500/15
-                border border-purple-500/30 px-2 py-0.5 text-[10px] text-purple-300">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Téléchargement de {vals.length} modèle(s)… {avg}%
-              </span>
-            )
-          })()}
           {models.length > 0 && selectedModel && (() => {
             const m = models.find((x) => x.id === selectedModel)
-            return m && m.tags && m.tags.length > 0 ? (
-              <span className="self-start rounded-full bg-purple-500/20 border border-purple-500/40
-                px-2 py-0.5 text-[10px] text-purple-300 font-medium">
-                {m.tags[0]}
-              </span>
-            ) : null
+            if (!m) return null
+            return (
+              <div className="flex flex-col gap-1.5">
+                <p className="text-[10px] text-gray-500 leading-snug">{m.description}</p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-full bg-gray-800 border border-gray-700 px-2 py-0.5 text-[10px] text-gray-300 font-mono">
+                    {m.family || 'model'}
+                  </span>
+                  <span className="rounded-full bg-gray-800 border border-gray-700 px-2 py-0.5 text-[10px] text-gray-300">
+                    {m.min_vram_mb > 0 ? `≥ ${(m.min_vram_mb / 1024).toFixed(1)} GB` : 'CPU OK'}
+                  </span>
+                  {m.compatible ? (
+                    <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] text-emerald-300 font-medium">
+                      Compatible
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[10px] text-amber-300 font-medium">
+                      <AlertTriangle className="h-2.5 w-2.5" /> May be slow / OOM
+                    </span>
+                  )}
+                  {m.gated && (
+                    <span className="flex items-center gap-1 rounded-full bg-purple-500/20 border border-purple-500/40 px-2 py-0.5 text-[10px] text-purple-300 font-medium">
+                      <Lock className="h-2.5 w-2.5" /> Gated (HF token)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
           })()}
         </div>
 
@@ -497,7 +452,7 @@ export default function ImageGenerationPage() {
                 value={width}
                 onChange={(e) => setWidth(Number(e.target.value))}
               >
-                {PIXEL_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
+                {pixelSizes.map((s) => <option key={s} value={s}>{s}px</option>)}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2 top-3 h-3.5 w-3.5 text-gray-500" />
             </div>
@@ -511,7 +466,7 @@ export default function ImageGenerationPage() {
                 value={height}
                 onChange={(e) => setHeight(Number(e.target.value))}
               >
-                {PIXEL_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
+                {pixelSizes.map((s) => <option key={s} value={s}>{s}px</option>)}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2 top-3 h-3.5 w-3.5 text-gray-500" />
             </div>
@@ -544,20 +499,6 @@ export default function ImageGenerationPage() {
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-gray-500" />
           </div>
-        </div>
-
-        {/* LoRA */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-400">
-            LoRA <span className="text-gray-600">(HF repo, optionnel)</span>
-          </label>
-          <input
-            className="rounded-xl bg-gray-900 border border-gray-800 p-2.5 text-sm text-gray-100
-              focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
-            placeholder="ex. ostris/super-cereal-sdxl-lora"
-            value={lora}
-            onChange={(e) => setLora(e.target.value)}
-          />
         </div>
 
         {/* Error */}
@@ -605,17 +546,11 @@ export default function ImageGenerationPage() {
         ) : (
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
             {jobs.map((job) => (
-              <JobCard key={job.job_id} job={job} onJobCompleted={handleJobCompleted} />
+              <JobCard key={job.job_id} job={job} onJobCompleted={handleJobCompleted} onJobFailed={handleJobFailed} />
             ))}
           </div>
         )}
       </main>
-
-      <HFModelBrowser
-        open={showBrowser}
-        onClose={() => setShowBrowser(false)}
-        onDownloadStarted={handleDownloadStarted}
-      />
     </div>
   )
 }

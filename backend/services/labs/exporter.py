@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 async def export_model(
     checkpoint_path: str,
     arch_id: str,
-    arch_config: Dict[str, Any],
+    arch_config: dict[str, Any],
     export_format: str,
     output_dir: str,
 ) -> str:
@@ -18,15 +18,22 @@ async def export_model(
     def _export() -> str:
         import torch
 
-        from services.labs.architecture_registry import get_arch
+        from services.labs.architecture_registry import build_model, get_arch
 
-        spec = get_arch(arch_id)
-        if spec is None:
+        if get_arch(arch_id) is None:
             raise ValueError(f"Unknown architecture: {arch_id}")
 
-        model = spec.builder(arch_config)
+        build_config = dict(arch_config)
+        if arch_id == "pretrained":
+            # The checkpoint already holds the full state — skip the ImageNet
+            # download and don't freeze, so every tensor loads cleanly.
+            build_config["pretrained"] = False
+            build_config["freeze_backbone"] = False
+
+        model = build_model(arch_id, build_config)
         ckpt = torch.load(checkpoint_path, map_location="cpu")
-        model.load_state_dict(ckpt["model_state"])
+        state = ckpt.get("model_state", ckpt) if isinstance(ckpt, dict) else ckpt
+        model.load_state_dict(state, strict=False)
         model.eval()
 
         out_dir = Path(output_dir)
@@ -48,6 +55,7 @@ async def export_model(
 
         elif export_format == "safetensors":
             from safetensors.torch import save_file
+
             out_path = str(out_dir / "model.safetensors")
             tensors = {k: v.contiguous() for k, v in model.state_dict().items()}
             save_file(tensors, out_path)

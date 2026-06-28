@@ -3,24 +3,29 @@ from services.agent.planner import ReactAgent
 
 
 class FakeOllama:
-    """Returns scripted assistant messages, like Ollama's /api/chat."""
+    """Scripted stand-in for OllamaClient.stream_chat.
+
+    Streams each scripted response character-by-character through ``on_token``
+    (like Ollama's streaming /api/chat) and returns the full text.
+    """
 
     def __init__(self, responses):
         self.responses = responses
         self.i = 0
 
-    async def chat(self, model, messages, tools=None, **kw):
-        msg = self.responses[self.i]
+    async def stream_chat(self, model, messages, on_token=None, **kw):
+        text = self.responses[self.i]
         self.i += 1
-        return msg
+        if on_token:
+            for ch in text:
+                on_token(ch)
+        return text
 
 
-async def test_native_tool_call_then_final_answer():
+async def test_tool_call_then_final_answer():
     fake = FakeOllama([
-        {"content": "", "tool_calls": [
-            {"function": {"name": "calculator", "arguments": {"expression": "2 + 2"}}}
-        ]},
-        {"content": "The answer is 4.", "tool_calls": []},
+        '```tool\n{"tool": "calculator", "args": {"expression": "2 + 2"}}\n```',
+        "The answer is 4.",
     ])
     agent = ReactAgent(client=fake, model="x")
 
@@ -38,11 +43,10 @@ async def test_native_tool_call_then_final_answer():
     assert call["id"] == res["id"]
 
 
-async def test_legacy_block_fallback():
+async def test_bare_json_tool_call():
     fake = FakeOllama([
-        {"content": "```tool\n{\"tool\": \"calculator\", \"args\": {\"expression\": \"3*3\"}}\n```",
-         "tool_calls": []},
-        {"content": "It is 9.", "tool_calls": []},
+        '{"tool": "calculator", "args": {"expression": "3*3"}}',
+        "It is 9.",
     ])
     agent = ReactAgent(client=fake, model="x")
     events = []
@@ -52,9 +56,10 @@ async def test_legacy_block_fallback():
 
 
 async def test_direct_answer_no_tools():
-    fake = FakeOllama([{"content": "Hello!", "tool_calls": []}])
+    fake = FakeOllama(["Hello!"])
     agent = ReactAgent(client=fake, model="x")
     events = []
     result = await agent.run(messages=[{"role": "user", "content": "hi"}], on_event=events.append)
     assert result == "Hello!"
-    assert [e["type"] for e in events if e["type"] == "token"]  # content emitted as a token
+    assert any(e["type"] == "token" for e in events)  # content streamed as tokens
+    assert any(e["type"] == "message_complete" for e in events)

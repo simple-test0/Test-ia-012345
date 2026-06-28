@@ -1,9 +1,12 @@
 """Training worker that runs in a separate process to avoid GIL contention."""
+from __future__ import annotations
+
+import contextlib
 import logging
 import multiprocessing as mp
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +14,9 @@ logger = logging.getLogger(__name__)
 def _training_process(
     run_id: str,
     arch_id: str,
-    arch_config: Dict[str, Any],
-    training_config: Dict[str, Any],
-    dataset_path: Optional[str],
+    arch_config: dict[str, Any],
+    training_config: dict[str, Any],
+    dataset_path: str | None,
     checkpoint_dir: str,
     metric_queue: mp.Queue,
     stop_event: mp.Event,
@@ -25,20 +28,17 @@ def _training_process(
     from torch.utils.data import DataLoader, random_split
 
     def emit(event: dict):
-        try:
+        with contextlib.suppress(Exception):
             metric_queue.put_nowait(event)
-        except Exception:
-            pass
 
     emit({"type": "status", "status": "running"})
 
     try:
         # ── Build model ──────────────────────────────────────────────────────
-        from services.labs.architecture_registry import get_arch
-        spec = get_arch(arch_id)
-        if spec is None:
+        from services.labs.architecture_registry import build_model, get_arch
+        if get_arch(arch_id) is None:
             raise ValueError(f"Unknown architecture: {arch_id}")
-        model = spec.builder(arch_config)
+        model = build_model(arch_id, arch_config)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
@@ -111,7 +111,9 @@ def _training_process(
         if sched_name == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
         elif sched_name == "linear":
-            scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=epochs)
+            scheduler = torch.optim.lr_scheduler.LinearLR(
+                optimizer, start_factor=1.0, end_factor=0.1, total_iters=epochs
+            )
         elif sched_name == "onecycle":
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 optimizer, max_lr=lr, steps_per_epoch=len(train_loader), epochs=epochs
@@ -309,10 +311,10 @@ class TrainingManager:
     """Manages training subprocesses and their metric queues."""
 
     def __init__(self):
-        self._processes: Dict[str, mp.Process] = {}
-        self._queues: Dict[str, mp.Queue] = {}
-        self._stop_events: Dict[str, mp.Event] = {}
-        self._pause_events: Dict[str, mp.Event] = {}
+        self._processes: dict[str, mp.Process] = {}
+        self._queues: dict[str, mp.Queue] = {}
+        self._stop_events: dict[str, mp.Event] = {}
+        self._pause_events: dict[str, mp.Event] = {}
 
     def start(
         self,
@@ -320,7 +322,7 @@ class TrainingManager:
         arch_id: str,
         arch_config: dict,
         training_config: dict,
-        dataset_path: Optional[str],
+        dataset_path: str | None,
         checkpoint_dir: str,
     ) -> mp.Queue:
         q: mp.Queue = mp.Queue(maxsize=1000)
@@ -373,7 +375,7 @@ class TrainingManager:
                 p.terminate()
         return True
 
-    def get_queue(self, run_id: str) -> Optional[mp.Queue]:
+    def get_queue(self, run_id: str) -> mp.Queue | None:
         return self._queues.get(run_id)
 
     def cleanup(self, run_id: str) -> None:

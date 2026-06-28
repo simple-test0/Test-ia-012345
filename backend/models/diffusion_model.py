@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import (
     JSON,
@@ -25,13 +24,13 @@ class DiffusionModel(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(256))
     repo_id: Mapped[str] = mapped_column(String(512), unique=True, index=True)
-    pipeline_class: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    pipeline_class: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     status: Mapped[str] = mapped_column(
         Enum("downloading", "ready", "error", name="diffusion_model_status"),
         default="downloading",
     )
-    local_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    local_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     # Estimated total download size (from HF metadata), used for progress %.
     total_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -44,8 +43,8 @@ class DiffusionModel(Base):
     supports_negative_prompt: Mapped[bool] = mapped_column(Boolean, default=True)
 
     gated: Mapped[bool] = mapped_column(Boolean, default=False)
-    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     downloads: Mapped[int] = mapped_column(Integer, default=0)
     likes: Mapped[int] = mapped_column(Integer, default=0)

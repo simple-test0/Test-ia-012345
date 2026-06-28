@@ -9,6 +9,8 @@ Because the REST check relies on a custom header (not cookies), it is not
 exploitable via CSRF: a cross-origin page cannot set custom headers without a
 CORS pre-flight that this app does not grant to untrusted origins.
 """
+import hmac
+
 from fastapi import Header, HTTPException, status
 
 from core.config import settings
@@ -17,7 +19,7 @@ from core.config import settings
 async def require_api_token(x_api_token: str = Header(default="")) -> None:
     if not settings.api_token:
         return
-    if x_api_token != settings.api_token:
+    if not hmac.compare_digest(x_api_token, settings.api_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API token",
@@ -28,4 +30,4 @@ def ws_token_ok(token: str) -> bool:
     """Validate a WebSocket token query parameter."""
     if not settings.api_token:
         return True
-    return token == settings.api_token
+    return hmac.compare_digest(token, settings.api_token)

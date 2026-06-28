@@ -5,6 +5,8 @@ A local, all-in-one AI web app: **image generation**, **LLM agents with tools**,
 
 - **Backend:** FastAPI (async), SQLAlchemy 2.0 + SQLite, WebSockets for live progress.
 - **Frontend:** React + Vite + TypeScript + Tailwind + Radix UI.
+- **Multi-vendor & hardware-aware:** runs on consumer GPUs (6–24 GB) and falls back to
+  CPU. Supports NVIDIA CUDA, AMD ROCm, Intel XPU and Apple MPS.
 
 ## Features
 
@@ -43,6 +45,10 @@ This creates a Python venv, installs deps, and starts:
 - frontend on http://localhost:5173
 
 Run `MODE=prod ./start.sh` to start the backend without auto-reload.
+
+For a first-time, beginner-friendly setup on Linux/macOS, run `./install.sh` once: it
+installs dependencies, picks the right PyTorch build for your GPU, and tunes the app to
+your hardware by writing an optimised `backend/.env` (via `scripts/optimize.py`).
 
 ### Windows (NVIDIA RTX)
 
@@ -87,6 +93,17 @@ Copy `backend/.env.example` to `backend/.env`:
 | `KAGGLE_USERNAME` / `KAGGLE_KEY` | Optional, for Kaggle datasets |
 
 For the frontend to send the token, build with `VITE_API_TOKEN=<token>`.
+
+### Re-optimise after a hardware change
+
+```bash
+python scripts/optimize.py          # detect accelerator + memory, rewrite backend/.env
+python scripts/optimize.py --print  # preview the tuned settings, write nothing
+```
+
+`scripts/optimize.py` picks the recommended image models & resolution, mixed-precision
+dtype, `torch.compile`, attention backend, how many pipelines stay resident, the megapixel
+cap, and the LLM size tier. The Labs UI also exposes an **"Auto-tune for my GPU"** button.
 
 ## Security
 - `code_executor` runs arbitrary Python. It is **disabled by default**; enable it only in an

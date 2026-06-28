@@ -23,11 +23,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install fastapi "uvicorn[standard]" python-multipart \
             sqlalchemy aiosqlite pydantic pydantic-settings \
-            huggingface-hub psutil ddgs httpx
+            huggingface-hub psutil ddgs httpx ruff
           pip install -r requirements-dev.txt
-          pip install ruff
       - name: Lint (ruff)
         run: ruff check .
+      - name: Type check (mypy)
+        run: mypy .
+        continue-on-error: true
       - name: Run tests
         run: pytest -q
 

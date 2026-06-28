@@ -13,27 +13,36 @@ aiosqlite==0.20.0
 pydantic==2.9.2
 pydantic-settings==2.5.2
 
-# ML - Core (install with: pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121)
-torch==2.4.1+cu121
-torchvision==0.19.1+cu121
+# ML - Core
+# GPU (NVIDIA): pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu124
+# AMD ROCm:    --extra-index-url https://download.pytorch.org/whl/rocm6.2
+# CPU / Apple: plain `pip install torch torchvision` (MPS ships in the default macOS wheel)
+# The unsuffixed pins below resolve to the CPU build by default; the index URL
+# above selects the matching CUDA/ROCm build. (torchaudio tracks torch's 2.x line.)
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
 
-# Image Generation
-diffusers==0.30.3
-transformers==4.44.2
-accelerate==0.34.2
-safetensors==0.4.5
-xformers==0.0.28.post1
+# Image Generation (FLUX.1 / SD3.5 require diffusers>=0.31)
+diffusers==0.32.2
+transformers==4.46.3
+accelerate==1.1.1
+safetensors==0.5.2
+sentencepiece==0.2.0    # T5 text encoder (SD3.5 / FLUX)
+protobuf==5.28.3
+# Optional, NVIDIA-only — SDPA is used by default so this is not required:
+# xformers==0.0.28.post3
 
 # Agents / LLM
 httpx==0.28.1
 ddgs==9.14.4
 
 # Labs / Training
-datasets==3.0.1
-huggingface-hub==0.25.1
+datasets==3.1.0
+huggingface-hub==0.26.2
 kaggle==1.6.17
 onnx==1.17.0
-onnxruntime-gpu==1.19.2
+onnxruntime==1.20.1
 
 # Hardware detection
 gputil==1.4.0

@@ -19,7 +19,7 @@ def test_sd15_uses_maintained_mirror():
 
 def test_gated_models_flagged():
     assert mr.MODEL_REGISTRY_MAP["flux-dev"].gated is True
-    assert mr.MODEL_REGISTRY_MAP["sd35"].gated is True
+    assert mr.MODEL_REGISTRY_MAP["sd35-large"].gated is True
     assert mr.MODEL_REGISTRY_MAP["flux-schnell"].gated is False
 
 

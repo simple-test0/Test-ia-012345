@@ -1,10 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
-
-from services.labs.architectures.cnn import build_cnn
-from services.labs.architectures.rnn import build_gru, build_lstm, build_rnn
-from services.labs.architectures.transformer import build_transformer
-from services.labs.architectures.vit import build_vit
+from typing import Any
 
 
 @dataclass
@@ -12,20 +7,62 @@ class ArchitectureSpec:
     id: str
     name: str
     description: str
-    builder: Callable
-    default_config: Dict[str, Any]
-    task_types: List[str]
+    default_config: dict[str, Any]
+    task_types: list[str]
     min_vram_mb: int
-    param_schema: Dict[str, Any]
-    tags: List[str] = field(default_factory=list)
+    param_schema: dict[str, Any]
+    tags: list[str] = field(default_factory=list)
 
 
-ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
+# CLAUDE: add new architectures here — add an ArchitectureSpec entry below and a
+# matching lazy branch in build_model() (keep builder imports lazy so the app
+# imports without torch).
+ARCHITECTURE_REGISTRY: dict[str, ArchitectureSpec] = {
+    "pretrained": ArchitectureSpec(
+        id="pretrained",
+        name="Transfer Learning (pretrained backbone)",
+        description=(
+            "Start from an ImageNet-pretrained backbone and retrain only the "
+            "classifier head — the fastest path to strong image-classification "
+            "results on consumer GPUs. Unfreeze the backbone later to fine-tune."
+        ),
+        default_config={
+            "backbone": "efficientnet_v2_s",
+            "num_classes": 10,
+            "in_channels": 3,
+            "image_size": 224,
+            "pretrained": True,
+            "freeze_backbone": True,
+        },
+        task_types=["classification"],
+        min_vram_mb=2048,
+        param_schema={
+            "backbone": {
+                "type": "select",
+                # Kept in sync with BACKBONES in architectures/pretrained.py;
+                # hardcoded here so the registry imports without torchvision.
+                "options": [
+                    "mobilenet_v3_large",
+                    "efficientnet_v2_s",
+                    "convnext_tiny",
+                    "resnet50",
+                    "vit_b_16",
+                ],
+                "label": "Pretrained backbone",
+            },
+            "num_classes": {"type": "integer", "min": 2, "max": 10000, "label": "Number of classes"},
+            "freeze_backbone": {"type": "boolean", "label": "Freeze backbone (head-only training)"},
+            "pretrained": {"type": "boolean", "label": "Use ImageNet weights"},
+        },
+        tags=["image", "transfer-learning", "recommended", "modern"],
+    ),
     "cnn": ArchitectureSpec(
         id="cnn",
         name="Convolutional Neural Network (CNN)",
-        description="Image feature extraction via convolutional layers. Best for image classification and detection tasks.",
-        builder=build_cnn,
+        description=(
+            "Image feature extraction via convolutional layers. Best for image "
+            "classification and detection tasks."
+        ),
         default_config={
             "num_classes": 10,
             "in_channels": 3,
@@ -56,7 +93,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="rnn",
         name="Recurrent Neural Network (RNN)",
         description="Sequential data processing with recurrent connections. Suitable for NLP and time-series.",
-        builder=build_rnn,
         default_config={
             "vocab_size": 10000,
             "embed_dim": 128,
@@ -83,7 +119,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="lstm",
         name="Long Short-Term Memory (LSTM)",
         description="Advanced RNN with gating mechanisms. Better gradient flow for longer sequences.",
-        builder=build_lstm,
         default_config={
             "vocab_size": 10000,
             "embed_dim": 128,
@@ -110,7 +145,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="gru",
         name="Gated Recurrent Unit (GRU)",
         description="Efficient variant of LSTM with fewer parameters. Trains faster with similar performance.",
-        builder=build_gru,
         default_config={
             "vocab_size": 10000,
             "embed_dim": 128,
@@ -137,7 +171,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="transformer",
         name="Transformer (Encoder)",
         description="Attention-based architecture. State-of-the-art for NLP tasks, scalable to large sizes.",
-        builder=build_transformer,
         default_config={
             "vocab_size": 50257,
             "n_embd": 256,
@@ -164,7 +197,6 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
         id="vit",
         name="Vision Transformer (ViT)",
         description="Transformer applied to image patches. Strong for image classification at scale.",
-        builder=build_vit,
         default_config={
             "image_size": 224,
             "patch_size": 16,
@@ -193,11 +225,35 @@ ARCHITECTURE_REGISTRY: Dict[str, ArchitectureSpec] = {
 }
 
 
-def get_arch(arch_id: str) -> Optional[ArchitectureSpec]:
+def get_arch(arch_id: str) -> ArchitectureSpec | None:
     return ARCHITECTURE_REGISTRY.get(arch_id)
 
 
-def list_archs(vram_mb: int = 0, task_type: str = "") -> List[ArchitectureSpec]:
+def build_model(arch_id: str, config: dict[str, Any]):
+    """Build a torch model for the given architecture.
+
+    Imports the builder lazily so that torch is only required when a model is
+    actually built (during training/export in a subprocess), never at app import.
+    """
+    if arch_id == "pretrained":
+        from services.labs.architectures.pretrained import build_pretrained
+        return build_pretrained(config)
+    if arch_id == "cnn":
+        from services.labs.architectures.cnn import build_cnn
+        return build_cnn(config)
+    if arch_id in ("rnn", "lstm", "gru"):
+        from services.labs.architectures.rnn import build_gru, build_lstm, build_rnn
+        return {"rnn": build_rnn, "lstm": build_lstm, "gru": build_gru}[arch_id](config)
+    if arch_id == "transformer":
+        from services.labs.architectures.transformer import build_transformer
+        return build_transformer(config)
+    if arch_id == "vit":
+        from services.labs.architectures.vit import build_vit
+        return build_vit(config)
+    raise ValueError(f"Unknown architecture: {arch_id}")
+
+
+def list_archs(vram_mb: int = 0, task_type: str = "") -> list[ArchitectureSpec]:
     results = list(ARCHITECTURE_REGISTRY.values())
     if vram_mb > 0:
         results = [a for a in results if a.min_vram_mb <= vram_mb]

@@ -1,25 +1,22 @@
 import asyncio
+import contextlib
 import random
 import shutil
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from core.database import AsyncSessionLocal, get_db
 from hardware.detector import get_primary_vram_mb
 from models.diffusion_model import DiffusionModel
 from models.image_job import ImageJob
 from services.image_gen.hf_connector import download_hf_model, download_progress, search_hf_models
-from services.image_gen.model_registry import (
-    curated_models,
-    get_compatible_models,
-    resolve_model,
-)
+from services.image_gen.model_registry import curated_models, get_compatible_models, get_model, resolve_model
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
 
@@ -36,12 +33,12 @@ class GenerateRequest(BaseModel):
     sampler: str = "DPM++ 2M"
     num_images: int = Field(1, ge=1, le=4)
     # Optional LoRA adapter (HF repo id), applied on top of the base model.
-    lora: Optional[str] = None
+    lora: str | None = None
 
 
 class HFModelDownloadRequest(BaseModel):
     repo_id: str
-    name: Optional[str] = None
+    name: str | None = None
 
 
 def _downloaded_model_dict(m: DiffusionModel, vram_mb: int) -> dict:
@@ -91,12 +88,13 @@ async def list_models(db: AsyncSession = Depends(get_db)):
             "default_width": m.default_width,
             "default_height": m.default_height,
             "tags": m.tags,
+            "family": m.family,
+            "gated": m.gated,
             "compatible": m.id in compatible,
             "source": "curated",
             "recommended": True,
             "status": "ready",
             "repo_id": m.repo_id,
-            "gated": m.gated,
         }
         for m in curated_models()
     ]
@@ -127,8 +125,31 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
             )
         raise HTTPException(status_code=404, detail=f"Model '{req.model_id}' not found")
 
+    # Reject oversized requests up front rather than OOM-ing the worker mid-job.
+    megapixels = (req.width * req.height) / 1_000_000
+    if megapixels > settings.max_image_megapixels:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{req.width}x{req.height} ({megapixels:.1f} MP) exceeds the limit of "
+                f"{settings.max_image_megapixels} MP. Lower the resolution."
+            ),
+        )
+
+    # Gated curated models need a Hugging Face token; fail clearly instead of a
+    # worker 401. (Downloaded models already supplied a token at download time.)
+    curated = get_model(req.model_id)
+    if curated is not None and curated.gated and not settings.huggingface_token:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Model '{curated.id}' is gated. Accept its license on Hugging Face "
+                "and set HUGGINGFACE_TOKEN in the backend environment."
+            ),
+        )
+
     job_id = str(uuid.uuid4())
-    seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 32 - 1)
+    seed = req.seed if req.seed != -1 else random.randint(0, 2**32 - 1)
 
     db_job = ImageJob(
         id=job_id,
@@ -159,8 +180,8 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "steps": req.steps,
         "cfg_scale": req.cfg_scale,
         "seed": seed,
-        "num_images": req.num_images,
         "sampler": req.sampler,
+        "num_images": req.num_images,
         "lora": req.lora,
     }
     await generation_queue.put(queue_job)
@@ -236,10 +257,8 @@ async def hf_model_delete(model_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Model not found")
 
     if rec.local_path:
-        try:
+        with contextlib.suppress(Exception):
             shutil.rmtree(Path(rec.local_path), ignore_errors=True)
-        except Exception:
-            pass
 
     await db.delete(rec)
     await db.commit()
