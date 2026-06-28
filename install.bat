@@ -114,11 +114,27 @@ if not exist "%BACKEND%\.venv" (
 echo [backend] Installation des dependances ^(torch CUDA 12.1 pour ta RTX, ca peut etre long^)...
 call "%BACKEND%\.venv\Scripts\activate.bat"
 python -m pip install --upgrade pip
-pip install -r "%BACKEND%\requirements.txt" --extra-index-url https://download.pytorch.org/whl/cu121
-if errorlevel 1 (
+
+REM  xformers n'a pas toujours de wheel Windows et ne doit PAS etre compile depuis
+REM  les sources (ca exige CUDA Toolkit + Visual Studio). Le code retombe tout seul
+REM  sur l'attention native SDPA de PyTorch s'il est absent. On installe donc tout
+REM  SAUF xformers, puis xformers en "best-effort" (wheel uniquement, jamais de build).
+set "REQ_TMP=%BACKEND%\requirements.win.tmp"
+findstr /v /i /c:"xformers" "%BACKEND%\requirements.txt" > "%REQ_TMP%"
+pip install -r "%REQ_TMP%" --extra-index-url https://download.pytorch.org/whl/cu121
+set "PIP_RC=%errorlevel%"
+del "%REQ_TMP%" >nul 2>&1
+if not "%PIP_RC%"=="0" (
   echo ERREUR: l'installation des dependances Python a echoue.
   pause
   exit /b 1
+)
+
+echo [backend] Tentative d'installation de xformers ^(optionnel, wheel uniquement^)...
+pip install --only-binary=:all: xformers==0.0.28.post1 --extra-index-url https://download.pytorch.org/whl/cu121
+if errorlevel 1 (
+  echo [warn] Pas de wheel xformers pour ta config : on continue sans.
+  echo        PyTorch utilisera son attention native SDPA ^(deja rapide sur RTX^).
 )
 
 REM Fichier .env (depuis l'exemple) si absent
