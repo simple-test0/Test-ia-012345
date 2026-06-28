@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import torch.nn as nn
 
@@ -37,7 +37,7 @@ class RNNClassifier(nn.Module):
         return self.head(self.dropout(last))
 
 
-def build_rnn(config: Dict[str, Any]) -> nn.Module:
+def build_rnn(config: dict[str, Any]) -> nn.Module:
     return RNNClassifier(
         vocab_size=config.get("vocab_size", 10000),
         embed_dim=config.get("embed_dim", 128),
@@ -50,7 +50,7 @@ def build_rnn(config: Dict[str, Any]) -> nn.Module:
     )
 
 
-def build_lstm(config: Dict[str, Any]) -> nn.Module:
+def build_lstm(config: dict[str, Any]) -> nn.Module:
     return RNNClassifier(
         vocab_size=config.get("vocab_size", 10000),
         embed_dim=config.get("embed_dim", 128),
@@ -63,7 +63,7 @@ def build_lstm(config: Dict[str, Any]) -> nn.Module:
     )
 
 
-def build_gru(config: Dict[str, Any]) -> nn.Module:
+def build_gru(config: dict[str, Any]) -> nn.Module:
     return RNNClassifier(
         vocab_size=config.get("vocab_size", 10000),
         embed_dim=config.get("embed_dim", 128),

@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from core.database import Base
 from sqlalchemy import JSON, DateTime, Enum, Integer, String, Text, func
@@ -25,8 +24,8 @@ class ImageJob(Base):
     seed: Mapped[int] = mapped_column(Integer, default=-1)
     sampler: Mapped[str] = mapped_column(String(64), default="DPM++ 2M")
     num_images: Mapped[int] = mapped_column(Integer, default=1)
-    output_paths: Mapped[Optional[list]] = mapped_column(JSON, default=list)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    output_paths: Mapped[list | None] = mapped_column(JSON, default=list)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

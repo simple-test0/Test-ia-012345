@@ -61,7 +61,10 @@ def _eval(node):
 
 @register_tool(
     name="calculator",
-    description="Evaluate a mathematical expression. Supports basic arithmetic, math functions (sin, cos, sqrt, log, etc.).",
+    description=(
+        "Evaluate a mathematical expression. Supports basic arithmetic, math "
+        "functions (sin, cos, sqrt, log, etc.)."
+    ),
     parameters={
         "type": "object",
         "properties": {

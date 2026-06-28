@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 async def export_model(
     checkpoint_path: str,
     arch_id: str,
-    arch_config: Dict[str, Any],
+    arch_config: dict[str, Any],
     export_format: str,
     output_dir: str,
 ) -> str:
