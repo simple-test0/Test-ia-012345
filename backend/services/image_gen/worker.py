@@ -54,9 +54,14 @@ class GenerationWorker:
         start_ms = int(time.time() * 1000)
         output_paths = []
         error_msg = None
+        pipe = None
+        mode = job.get("mode", "txt2img")
+        seed = job["seed"]
 
         try:
-            pipe = await pipeline_manager.get_pipeline(model_id, repo_id)
+            pipe = await pipeline_manager.get_pipeline(
+                model_id, repo_id, mode=mode, controlnet_repo=job.get("controlnet_repo")
+            )
             if job.get("sampler"):
                 apply_sampler(pipe, job["sampler"])
             lora = job.get("lora")
@@ -68,6 +73,10 @@ class GenerationWorker:
                     logger.warning(f"Could not load LoRA {lora}: {exc}")
             loop = self._loop
             step_data = {"current": 0}
+            # img2img only runs the tail of the schedule (steps × strength).
+            total_steps = job["steps"]
+            if mode == "img2img":
+                total_steps = max(1, int(round(total_steps * (job.get("strength") or 0.8))))
 
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 step_data["current"] = step_index + 1
@@ -98,14 +107,13 @@ class GenerationWorker:
                     ws_manager.send(job_id, {
                         "type": "step",
                         "step": step_data["current"],
-                        "total_steps": job["steps"],
+                        "total_steps": total_steps,
                         "preview": preview_b64,
                     }),
                     loop,
                 )
                 return callback_kwargs
 
-            seed = job["seed"]
             if seed == -1:
                 seed = random.randint(0, 2**32 - 1)
 
@@ -117,8 +125,6 @@ class GenerationWorker:
                 prompt=job["prompt"],
                 num_inference_steps=job["steps"],
                 generator=generator,
-                width=job["width"],
-                height=job["height"],
                 num_images_per_prompt=job.get("num_images", 1),
                 callback_on_step_end=step_callback,
                 callback_on_step_end_tensor_inputs=["latents"],
@@ -127,6 +133,30 @@ class GenerationWorker:
                 generate_kwargs["negative_prompt"] = job["negative_prompt"]
             if job.get("cfg_scale", 7.5) > 0:
                 generate_kwargs["guidance_scale"] = job["cfg_scale"]
+
+            size = (job["width"], job["height"])
+            if mode == "img2img":
+                # img2img pipelines derive the output size from the input
+                # image, so resize it instead of passing width/height.
+                from PIL import Image as PILImage
+
+                init_img = PILImage.open(job["init_image_path"]).convert("RGB").resize(size)
+                generate_kwargs["image"] = init_img
+                generate_kwargs["strength"] = job.get("strength") or 0.8
+            elif mode == "controlnet":
+                from PIL import Image as PILImage
+
+                from services.image_gen.modes import prepare_control_image
+
+                control_img = (
+                    PILImage.open(job["control_image_path"]).convert("RGB").resize(size)
+                )
+                generate_kwargs["image"] = prepare_control_image(
+                    control_img, job.get("controlnet_type") or "", job.get("preprocess", True)
+                )
+                generate_kwargs["width"], generate_kwargs["height"] = size
+            else:
+                generate_kwargs["width"], generate_kwargs["height"] = size
 
             result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: pipe(**generate_kwargs)
@@ -145,8 +175,8 @@ class GenerationWorker:
             logger.exception(f"Generation failed for job {job_id}")
         finally:
             # Pipelines are cached/reused — remove any LoRA so it doesn't leak
-            # into the next job.
-            if job.get("lora"):
+            # into the next job. (pipe stays None if loading itself failed.)
+            if job.get("lora") and pipe is not None:
                 try:
                     pipe.unload_lora_weights()
                 except Exception:

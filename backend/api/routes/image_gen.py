@@ -20,8 +20,19 @@ from services.image_gen.model_registry import (
     get_compatible_models,
     resolve_model,
 )
+from services.image_gen.modes import (
+    CONTROLNET_TYPES,
+    SUPPORTED_MODES,
+    controlnet_repo_for,
+    decode_image_payload,
+    detect_family,
+)
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
+
+# Keep strong references to fire-and-forget download tasks: asyncio only holds
+# weak refs, so an unreferenced task can be garbage-collected mid-download.
+_background_tasks: set = set()
 
 
 class GenerateRequest(BaseModel):
@@ -37,6 +48,16 @@ class GenerateRequest(BaseModel):
     num_images: int = Field(1, ge=1, le=4)
     # Optional LoRA adapter (HF repo id), applied on top of the base model.
     lora: Optional[str] = None
+    # Generation mode. img2img needs init_image (+ strength); controlnet needs
+    # control_image + controlnet_type. Images are base64 `data:` URLs.
+    mode: str = "txt2img"
+    init_image: Optional[str] = None
+    strength: float = Field(0.8, ge=0.05, le=1.0)
+    controlnet_type: Optional[str] = None
+    control_image: Optional[str] = None
+    # canny control images are preprocessed server-side unless disabled
+    # (depth/pose always expect a ready-made control map).
+    preprocess: bool = True
 
 
 class HFModelDownloadRequest(BaseModel):
@@ -111,6 +132,53 @@ async def list_models(db: AsyncSession = Depends(get_db)):
     return models
 
 
+def _save_input_image(data: str, job_id: str, suffix: str) -> str:
+    """Decode + persist an input image; returns its path on disk."""
+    from core.config import settings
+
+    img = decode_image_payload(data)  # raises ValueError on bad input
+    inputs_dir = settings.images_dir / "inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    fpath = inputs_dir / f"{job_id}_{suffix}.png"
+    img.save(str(fpath))
+    return str(fpath)
+
+
+def _validate_mode(req: GenerateRequest, resolved) -> Optional[str]:
+    """Validate mode-specific inputs; returns the ControlNet repo if needed.
+
+    Raises HTTPException(400) with a user-facing message on invalid combos.
+    """
+    if req.mode not in SUPPORTED_MODES:
+        raise HTTPException(status_code=400, detail=f"Mode inconnu : '{req.mode}'")
+
+    if req.mode == "img2img" and not req.init_image:
+        raise HTTPException(
+            status_code=400, detail="Le mode img2img nécessite une image source (init_image)"
+        )
+
+    if req.mode != "controlnet":
+        return None
+
+    if not req.control_image:
+        raise HTTPException(
+            status_code=400, detail="Le mode ControlNet nécessite une image de contrôle"
+        )
+    if req.controlnet_type not in CONTROLNET_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Type ControlNet invalide (attendu : {', '.join(CONTROLNET_TYPES)})",
+        )
+    family = detect_family(resolved.pipeline_class, resolved.repo_id)
+    cn_repo = controlnet_repo_for(family, req.controlnet_type)
+    if cn_repo is None:
+        raise HTTPException(
+            status_code=400,
+            detail="ControlNet n'est disponible que pour les modèles SD 1.5 et SDXL",
+        )
+    return cn_repo
+
+
 @router.post("/generate")
 async def generate(req: GenerateRequest, request: Request, db: AsyncSession = Depends(get_db)):
     resolved = await resolve_model(req.model_id, db)
@@ -127,8 +195,20 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
             )
         raise HTTPException(status_code=404, detail=f"Model '{req.model_id}' not found")
 
+    cn_repo = _validate_mode(req, resolved)
+
     job_id = str(uuid.uuid4())
     seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 32 - 1)
+
+    init_image_path = None
+    control_image_path = None
+    try:
+        if req.mode == "img2img":
+            init_image_path = _save_input_image(req.init_image, job_id, "init")
+        elif req.mode == "controlnet":
+            control_image_path = _save_input_image(req.control_image, job_id, "control")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
     db_job = ImageJob(
         id=job_id,
@@ -143,6 +223,11 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         seed=seed,
         sampler=req.sampler,
         num_images=req.num_images,
+        mode=req.mode,
+        strength=req.strength if req.mode == "img2img" else None,
+        controlnet_type=req.controlnet_type if req.mode == "controlnet" else None,
+        init_image_path=init_image_path,
+        control_image_path=control_image_path,
     )
     db.add(db_job)
     await db.commit()
@@ -162,6 +247,13 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "num_images": req.num_images,
         "sampler": req.sampler,
         "lora": req.lora,
+        "mode": req.mode,
+        "strength": req.strength,
+        "init_image_path": init_image_path,
+        "control_image_path": control_image_path,
+        "controlnet_type": req.controlnet_type,
+        "controlnet_repo": cn_repo,
+        "preprocess": req.preprocess,
     }
     await generation_queue.put(queue_job)
 
@@ -211,7 +303,9 @@ async def hf_download(req: HFModelDownloadRequest, db: AsyncSession = Depends(ge
     db.add(model)
     await db.commit()
 
-    asyncio.create_task(download_hf_model(db_id, repo_id, AsyncSessionLocal))
+    task = asyncio.create_task(download_hf_model(db_id, repo_id, AsyncSessionLocal))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return {"id": db_id, "status": "downloading"}
 
 
@@ -287,6 +381,7 @@ async def list_jobs(
             "job_id": j.id,
             "status": j.status,
             "model_id": j.model_id,
+            "mode": j.mode,
             "prompt": j.prompt[:100],
             "width": j.width,
             "height": j.height,
@@ -312,6 +407,9 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "job_id": job.id,
         "status": job.status,
         "model_id": job.model_id,
+        "mode": job.mode,
+        "strength": job.strength,
+        "controlnet_type": job.controlnet_type,
         "prompt": job.prompt,
         "negative_prompt": job.negative_prompt,
         "width": job.width,

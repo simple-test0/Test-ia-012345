@@ -135,6 +135,7 @@ class ResolvedModel(NamedTuple):
     default_width: int
     default_height: int
     supports_negative_prompt: bool
+    pipeline_class: Optional[str] = None
 
 
 async def resolve_model(model_id: str, db) -> Optional[ResolvedModel]:
@@ -156,6 +157,7 @@ async def resolve_model(model_id: str, db) -> Optional[ResolvedModel]:
             default_width=curated.default_width,
             default_height=curated.default_height,
             supports_negative_prompt=curated.supports_negative_prompt,
+            pipeline_class=curated.pipeline_class,
         )
 
     # Downloaded model — look it up in the database.
@@ -180,4 +182,5 @@ async def resolve_model(model_id: str, db) -> Optional[ResolvedModel]:
         default_width=rec.default_width or 512,
         default_height=rec.default_height or 512,
         supports_negative_prompt=rec.supports_negative_prompt,
+        pipeline_class=rec.pipeline_class,
     )

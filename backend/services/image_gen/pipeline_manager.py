@@ -47,15 +47,30 @@ class PipelineManager:
         self._loaded: OrderedDict = OrderedDict()
         self._lock = asyncio.Lock()
 
-    async def get_pipeline(self, model_id: str, repo_id: str):
+    async def get_pipeline(
+        self,
+        model_id: str,
+        repo_id: str,
+        mode: str = "txt2img",
+        controlnet_repo: str | None = None,
+    ):
+        key = (model_id, mode, controlnet_repo)
         async with self._lock:
-            if model_id in self._loaded:
-                self._loaded.move_to_end(model_id)
-                return self._loaded[model_id]
+            if key in self._loaded:
+                self._loaded.move_to_end(key)
+                return self._loaded[key]
 
-            if len(self._loaded) >= self._max_loaded:
-                oldest_id, oldest_pipe = self._loaded.popitem(last=False)
-                logger.info(f"Evicting pipeline: {oldest_id}")
+            # Reuse the components of an already-loaded pipeline for the same
+            # model (from_pipe shares weights — no extra VRAM, near-instant).
+            base_pipe = None
+            for (mid, _m, _c), loaded in self._loaded.items():
+                if mid == model_id:
+                    base_pipe = loaded
+                    break
+
+            if base_pipe is None and len(self._loaded) >= self._max_loaded:
+                oldest_key, oldest_pipe = self._loaded.popitem(last=False)
+                logger.info(f"Evicting pipeline: {oldest_key}")
                 del oldest_pipe
                 try:
                     import torch
@@ -64,21 +79,31 @@ class PipelineManager:
                     pass
 
             pipe = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self._load_pipeline(model_id, repo_id)
+                None,
+                lambda: self._load_pipeline(model_id, repo_id, mode, controlnet_repo, base_pipe),
             )
-            self._loaded[model_id] = pipe
+            self._loaded[key] = pipe
             return pipe
 
-    def _load_pipeline(self, model_id: str, repo_id: str):
+    def _load_pipeline(
+        self,
+        model_id: str,
+        repo_id: str,
+        mode: str = "txt2img",
+        controlnet_repo: str | None = None,
+        base_pipe=None,
+    ):
         import torch
-        from diffusers import AutoPipelineForText2Image
+        from diffusers import AutoPipelineForImage2Image, AutoPipelineForText2Image
 
         from core.config import settings
 
         vram_mb = self._get_vram_mb()
         dtype = torch.float16 if vram_mb >= 4096 else torch.float32
 
-        logger.info(f"Loading pipeline {model_id} ({repo_id}) dtype={dtype}")
+        logger.info(f"Loading pipeline {model_id} ({repo_id}) mode={mode} dtype={dtype}")
+
+        auto_cls = AutoPipelineForImage2Image if mode == "img2img" else AutoPipelineForText2Image
 
         # cache_dir keeps all weights under data/models/diffusion (curated models
         # are downloaded on demand, HF-downloaded models are a cache hit).
@@ -91,10 +116,32 @@ class PipelineManager:
             cache_dir=str(settings.models_dir / "diffusion"),
             token=settings.huggingface_token or None,
         )
+
+        extra = {}
+        if mode == "controlnet":
+            from diffusers import ControlNetModel
+
+            extra["controlnet"] = ControlNetModel.from_pretrained(
+                controlnet_repo, torch_dtype=dtype,
+                cache_dir=str(settings.models_dir / "diffusion"),
+            )
+
+        if base_pipe is not None:
+            pipe = auto_cls.from_pipe(base_pipe, **extra)
+            # Shared components already carry the base pipe's device/memory
+            # config; only the freshly loaded ControlNet needs to follow.
+            cn = extra.get("controlnet")
+            if cn is not None and hasattr(pipe, "unet"):
+                try:
+                    cn.to(pipe.unet.device)
+                except Exception as exc:
+                    logger.info(f"Could not move ControlNet to unet device: {exc}")
+            return pipe
+
         try:
-            pipe = AutoPipelineForText2Image.from_pretrained(repo_id, variant="fp16", **common)
+            pipe = auto_cls.from_pretrained(repo_id, variant="fp16", **common, **extra)
         except Exception:
-            pipe = AutoPipelineForText2Image.from_pretrained(repo_id, **common)
+            pipe = auto_cls.from_pretrained(repo_id, **common, **extra)
 
         # SDXL's VAE overflows in fp16 and renders all-black images; keep it in
         # fp32. `upcast_vae` is a no-op concept on pipelines that don't define it.
