@@ -1,0 +1,6 @@
+# Les scripts batch Windows doivent etre en CRLF au checkout :
+# cmd.exe gere mal les goto/labels dans les fichiers en LF.
+*.bat text eol=crlf
+
+# Les scripts shell restent en LF partout.
+*.sh text eol=lf

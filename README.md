@@ -49,14 +49,19 @@ Run `MODE=prod ./start.sh` to start the backend without auto-reload.
 Sur une machine Windows neuve (rien d'installé), double-cliquez sur :
 
 ```bat
-install.bat   :: installe Python 3.11+, Node 20+ et Ollama (via winget) si besoin,
-              :: crée le venv, installe les deps backend (torch CUDA 12.1) + frontend, crée .env,
-              :: et télécharge le modèle Ollama par défaut (llama3.2) pour l'onglet Agent
-start.bat     :: démarre le backend (http://localhost:8000) et le frontend (http://localhost:5173)
+install.bat   :: installe Python 3.11/3.12, Node 20+ et Ollama si besoin (winget, avec repli sur
+              :: téléchargement direct), crée le venv, installe les deps backend (torch CUDA 12.1,
+              :: ou CPU si pas de GPU NVIDIA) + frontend, crée .env, et télécharge le modèle
+              :: Ollama par défaut (llama3.2) pour l'onglet Agent
+start.bat     :: démarre le backend (http://localhost:8000) et le frontend (http://localhost:5173),
+              :: relance install.bat tout seul s'il manque quelque chose, et redémarre
+              :: automatiquement les serveurs en cas de crash
 ```
 
-`install.bat` est à lancer une seule fois. Si Python ou Node viennent d'être installés,
-fermez puis rouvrez le terminal et relancez `install.bat` (mise à jour du PATH).
+`install.bat` est entièrement autonome : il réessaie chaque étape, met à jour le PATH tout seul
+(pas besoin de fermer/rouvrir le terminal) et peut être relancé à volonté — il reprend là où il
+s'est arrêté. Le détail de chaque exécution est journalisé dans `install.log`.
+En pratique, double-cliquer sur `start.bat` suffit : il installe ce qui manque puis démarre tout.
 
 ### Manual
 
