@@ -12,10 +12,35 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+async def _recover_orphaned_jobs() -> None:
+    """Fail jobs left queued/running by a previous process.
+
+    The generation queue is in-memory, so those jobs can never resume after a
+    restart — without this they'd show as running forever in the history.
+    """
+    from sqlalchemy import select
+
+    from core.database import AsyncSessionLocal
+    from models.image_job import ImageJob
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ImageJob).where(ImageJob.status.in_(["queued", "running"]))
+        )
+        orphans = result.scalars().all()
+        for job in orphans:
+            job.status = "failed"
+            job.error_message = "Interrompu par un redémarrage du serveur"
+        if orphans:
+            await db.commit()
+            logger.info(f"Marked {len(orphans)} orphaned job(s) as failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
     await init_db()
+    await _recover_orphaned_jobs()
 
     # Import tools so they self-register
     import services.agent.tools.calculator  # noqa: F401

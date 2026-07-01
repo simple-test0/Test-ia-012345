@@ -10,6 +10,9 @@ A local, all-in-one AI web app: **image generation**, **LLM agents with tools**,
 
 ### 🖼️ Image generation
 - Stable Diffusion 1.5 / SDXL / SDXL-Turbo, plus FLUX.1 and SD 3.5 (gated).
+- **Three modes**: text-to-image, **img2img** (upload a source image + strength slider),
+  and **ControlNet** (canny/depth/pose) for SD 1.5 / SDXL. Canny maps are computed
+  server-side; depth/pose expect a precomputed control map.
 - **Hugging Face connector**: search and download *any* text-to-image model from the UI;
   downloaded models persist and appear under "Téléchargés". Models are never version-pinned
   (always the latest `main`).

@@ -2,6 +2,9 @@ import api from './client'
 
 export const getModels = () => api.get('/image/models').then(r => r.data)
 
+export type GenerationMode = 'txt2img' | 'img2img' | 'controlnet'
+export type ControlNetType = 'canny' | 'depth' | 'pose'
+
 export const generateImage = (params: {
   model_id: string
   prompt: string
@@ -14,6 +17,12 @@ export const generateImage = (params: {
   sampler: string
   num_images: number
   lora?: string
+  mode?: GenerationMode
+  init_image?: string // base64 data URL
+  strength?: number
+  controlnet_type?: ControlNetType
+  control_image?: string // base64 data URL
+  preprocess?: boolean
 }) => api.post('/image/generate', params).then(r => r.data)
 
 export const getJobs = (limit = 20, offset = 0) =>

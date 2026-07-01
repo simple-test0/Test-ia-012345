@@ -28,8 +28,16 @@
 - [x] Esthétique : système de **toasts** global, couleurs de focus unifiées (violet),
       champ LoRA dans l'UI.
 - [x] Remplacement des `except: pass` muets par des logs debug.
+- [x] Génération **img2img** : upload d'image source + slider strength, pipeline
+      `AutoPipelineForImage2Image` (réutilise les poids du pipeline chargé via `from_pipe`).
+- [x] **ControlNet** (canny/depth/pose) pour SD 1.5 et SDXL : upload d'image de contrôle,
+      pré-traitement canny local (PIL, sans cv2) ; depth/pose attendent une carte déjà calculée.
+- [x] **Stabilisation** : récupération des jobs orphelins au démarrage (queue en mémoire),
+      correction du `NameError` masquant l'erreur réelle quand le chargement du pipeline échoue,
+      référence forte sur les tâches de téléchargement HF (risque de GC en plein download),
+      gestion des événements WS `started`/`error` côté front (jobs qui restaient « queued »/
+      « running » pour toujours), messages d'erreur backend affichés dans l'UI.
 
 ## ⏭️ Restant (nécessite un GPU pour être validé)
-- [ ] Génération **img2img** (upload d'image source) — back + UI à valider sur GPU.
-- [ ] **ControlNet** (pose/depth/canny) — pipeline + UI dédiés.
+- [ ] Valider img2img + ControlNet sur GPU (le code est en place, testé sans torch).
 - [ ] Tests e2e exécutant réellement torch/diffusers (marqueur `heavy` déjà en place).

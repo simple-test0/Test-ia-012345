@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, ImageIcon, ChevronDown, Plus } from 'lucide-react'
 import { generateImage, getModels, getJobs, getHFModelStatus } from '../api/image'
+import type { GenerationMode, ControlNetType } from '../api/image'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { wsUrl } from '../api/client'
 import HFModelBrowser from '../components/image/HFModelBrowser'
+import ImageUploadField from '../components/image/ImageUploadField'
 import { toast } from '../components/ui/toast'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -27,6 +29,8 @@ interface ImageJob {
   created_at: string
   images?: string[] // base64 data URLs
   queue_position?: number
+  mode?: GenerationMode
+  error_message?: string
 }
 
 interface GenerateParams {
@@ -41,6 +45,11 @@ interface GenerateParams {
   seed: number
   num_images: number
   lora?: string
+  mode?: GenerationMode
+  init_image?: string
+  strength?: number
+  controlnet_type?: ControlNetType
+  control_image?: string
 }
 
 interface WsStepEvent {
@@ -60,13 +69,35 @@ interface WsQueueEvent {
   position: number
 }
 
-type WsEvent = WsStepEvent | WsCompletedEvent | WsQueueEvent
+interface WsErrorEvent {
+  type: 'error'
+  message?: string
+}
+
+interface WsStartedEvent {
+  type: 'started'
+  job_id: string
+}
+
+type WsEvent = WsStepEvent | WsCompletedEvent | WsQueueEvent | WsErrorEvent | WsStartedEvent
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const SAMPLERS = ['DPM++ 2M', 'Euler', 'Euler a', 'DDIM', 'LMS']
 const PIXEL_SIZES = [512, 768, 1024]
 const NUM_IMAGES_OPTIONS = [1, 2, 3, 4]
+
+const MODES: { id: GenerationMode; label: string }[] = [
+  { id: 'txt2img', label: 'Texte → Image' },
+  { id: 'img2img', label: 'Image → Image' },
+  { id: 'controlnet', label: 'ControlNet' },
+]
+
+const CONTROLNET_TYPES: { id: ControlNetType; label: string; hint: string }[] = [
+  { id: 'canny', label: 'Canny (contours)', hint: "Les contours sont extraits automatiquement de l'image." },
+  { id: 'depth', label: 'Depth (profondeur)', hint: 'Fournissez une carte de profondeur déjà calculée.' },
+  { id: 'pose', label: 'Pose (OpenPose)', hint: 'Fournissez un squelette OpenPose déjà calculé.' },
+]
 
 const STATUS_COLORS: Record<ImageJob['status'], string> = {
   queued: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40',
@@ -80,14 +111,17 @@ const STATUS_COLORS: Record<ImageJob['status'], string> = {
 interface ActiveJobProgressProps {
   jobId: string
   onCompleted: (images: string[]) => void
+  onFailed: (message: string) => void
 }
 
-function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
+function ActiveJobProgress({ jobId, onCompleted, onFailed }: ActiveJobProgressProps) {
   const [step, setStep] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
   const [preview, setPreview] = useState<string | null>(null)
   const onCompletedRef = useRef(onCompleted)
   onCompletedRef.current = onCompleted
+  const onFailedRef = useRef(onFailed)
+  onFailedRef.current = onFailed
 
   useWebSocket(wsUrl(`/ws/image/${jobId}`), {
     onMessage: (raw) => {
@@ -98,6 +132,8 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
         if (evt.preview) setPreview(evt.preview)
       } else if (evt.type === 'completed') {
         onCompletedRef.current(evt.images)
+      } else if (evt.type === 'error') {
+        onFailedRef.current(evt.message || 'La génération a échoué')
       }
     },
   })
@@ -132,9 +168,10 @@ function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
 interface JobCardProps {
   job: ImageJob
   onJobCompleted: (jobId: string, images: string[]) => void
+  onJobFailed: (jobId: string, message: string) => void
 }
 
-function JobCard({ job, onJobCompleted }: JobCardProps) {
+function JobCard({ job, onJobCompleted, onJobFailed }: JobCardProps) {
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
@@ -148,6 +185,7 @@ function JobCard({ job, onJobCompleted }: JobCardProps) {
         <ActiveJobProgress
           jobId={job.job_id}
           onCompleted={(images) => onJobCompleted(job.job_id, images)}
+          onFailed={(message) => onJobFailed(job.job_id, message)}
         />
       )}
 
@@ -175,7 +213,7 @@ function JobCard({ job, onJobCompleted }: JobCardProps) {
       )}
 
       {job.status === 'failed' && (
-        <p className="text-xs text-red-400">Generation failed</p>
+        <p className="text-xs text-red-400">{job.error_message || 'La génération a échoué'}</p>
       )}
 
       <p className="text-[10px] text-gray-600">{new Date(job.created_at).toLocaleString()}</p>
@@ -200,6 +238,13 @@ export default function ImageGenerationPage() {
   const [numImages, setNumImages] = useState(1)
   const [lora, setLora] = useState('')
 
+  // Generation mode (txt2img / img2img / controlnet)
+  const [mode, setMode] = useState<GenerationMode>('txt2img')
+  const [initImage, setInitImage] = useState<string | null>(null)
+  const [strength, setStrength] = useState(0.8)
+  const [cnType, setCnType] = useState<ControlNetType>('canny')
+  const [controlImage, setControlImage] = useState<string | null>(null)
+
   // UI state
   const [loading, setLoading] = useState(false)
   const [queuePosition, setQueuePosition] = useState<number | null>(null)
@@ -218,8 +263,24 @@ export default function ImageGenerationPage() {
       const evt = raw as WsEvent
       if (evt.type === 'queued') {
         setQueuePosition(evt.position)
+      } else if (evt.type === 'started' || evt.type === 'step') {
+        // Flip the freshly submitted job to running so its card streams progress.
+        setQueuePosition(null)
+        const id = activeJobId
+        if (id) {
+          setJobs((prev) =>
+            prev.map((j) =>
+              j.job_id === id && j.status === 'queued' ? { ...j, status: 'running' as const } : j
+            )
+          )
+        }
       } else if (evt.type === 'completed') {
         setQueuePosition(null)
+        if (activeJobId) handleJobCompleted(activeJobId, evt.images)
+        setActiveJobId(null)
+      } else if (evt.type === 'error') {
+        setQueuePosition(null)
+        if (activeJobId) handleJobFailed(activeJobId, evt.message || 'La génération a échoué')
         setActiveJobId(null)
       }
     },
@@ -290,8 +351,13 @@ export default function ImageGenerationPage() {
       .catch(() => {})
   }, [])
 
+  const canGenerate =
+    prompt.trim() !== '' &&
+    (mode !== 'img2img' || initImage !== null) &&
+    (mode !== 'controlnet' || controlImage !== null)
+
   const handleGenerate = async () => {
-    if (!prompt.trim()) return
+    if (!canGenerate) return
     setLoading(true)
     setError(null)
     setQueuePosition(null)
@@ -308,6 +374,12 @@ export default function ImageGenerationPage() {
       seed,
       num_images: numImages,
       lora: lora.trim() || undefined,
+      mode,
+      ...(mode === 'img2img' && { init_image: initImage ?? undefined, strength }),
+      ...(mode === 'controlnet' && {
+        controlnet_type: cnType,
+        control_image: controlImage ?? undefined,
+      }),
     }
 
     try {
@@ -316,13 +388,17 @@ export default function ImageGenerationPage() {
         job_id: result.job_id,
         status: result.status ?? 'queued',
         prompt,
+        mode,
         created_at: new Date().toISOString(),
         queue_position: result.queue_position,
       }
       setJobs((prev) => [newJob, ...prev])
       setActiveJobId(result.job_id)
     } catch (e) {
-      setError('Generation failed. Please try again.')
+      // Surface the backend's message (e.g. invalid mode inputs, model not
+      // ready) instead of a generic one when available.
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail || 'La génération a échoué. Réessayez.')
     } finally {
       setLoading(false)
     }
@@ -336,10 +412,95 @@ export default function ImageGenerationPage() {
     )
   }
 
+  const handleJobFailed = (jobId: string, message: string) => {
+    setJobs((prev) =>
+      prev.map((j) =>
+        j.job_id === jobId ? { ...j, status: 'failed' as const, error_message: message } : j
+      )
+    )
+    toast.error(message)
+  }
+
   return (
     <div className="flex h-full gap-4 p-4 overflow-hidden">
       {/* ── Left Panel ── */}
       <aside className="w-[35%] shrink-0 flex flex-col gap-3 overflow-y-auto pr-1">
+        {/* Mode Tabs */}
+        <div className="grid grid-cols-3 gap-1 rounded-xl bg-gray-900 border border-gray-800 p-1">
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => setMode(m.id)}
+              className={`rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+                mode === m.id
+                  ? 'bg-purple-600 text-white'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        {/* img2img inputs */}
+        {mode === 'img2img' && (
+          <>
+            <ImageUploadField
+              label="Image source"
+              value={initImage}
+              onChange={setInitImage}
+            />
+            <div className="flex flex-col gap-1">
+              <div className="flex justify-between">
+                <label className="text-xs font-medium text-gray-400">
+                  Strength <span className="text-gray-600">(fidélité à l'image source)</span>
+                </label>
+                <span className="text-xs text-purple-400 font-mono">{strength.toFixed(2)}</span>
+              </div>
+              <input
+                type="range" min={0.05} max={1} step={0.05} value={strength}
+                onChange={(e) => setStrength(Number(e.target.value))}
+                className="w-full accent-purple-500 cursor-pointer"
+              />
+              <p className="text-[10px] text-gray-600">
+                Faible = proche de l'image source, élevé = plus créatif.
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* ControlNet inputs */}
+        {mode === 'controlnet' && (
+          <>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-400">Type de contrôle</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-3 pr-8
+                    text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
+                  value={cnType}
+                  onChange={(e) => setCnType(e.target.value as ControlNetType)}
+                >
+                  {CONTROLNET_TYPES.map((t) => (
+                    <option key={t.id} value={t.id}>{t.label}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-gray-500" />
+              </div>
+            </div>
+            <ImageUploadField
+              label="Image de contrôle"
+              hint={CONTROLNET_TYPES.find((t) => t.id === cnType)?.hint}
+              value={controlImage}
+              onChange={setControlImage}
+            />
+            <p className="rounded-lg bg-blue-500/10 border border-blue-500/30 px-3 py-2 text-[10px] text-blue-300">
+              ControlNet est disponible pour les modèles SD 1.5 et SDXL.
+            </p>
+          </>
+        )}
+
         {/* Positive Prompt */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-400">Prompt</label>
@@ -580,7 +741,7 @@ export default function ImageGenerationPage() {
             hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed
             px-4 py-3 text-sm font-semibold text-white transition-colors"
           onClick={handleGenerate}
-          disabled={loading || !prompt.trim()}
+          disabled={loading || !canGenerate}
         >
           {loading ? (
             <>
@@ -605,7 +766,12 @@ export default function ImageGenerationPage() {
         ) : (
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
             {jobs.map((job) => (
-              <JobCard key={job.job_id} job={job} onJobCompleted={handleJobCompleted} />
+              <JobCard
+                key={job.job_id}
+                job={job}
+                onJobCompleted={handleJobCompleted}
+                onJobFailed={handleJobFailed}
+              />
             ))}
           </div>
         )}
