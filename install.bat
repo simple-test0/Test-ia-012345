@@ -16,6 +16,23 @@ echo === AI Studio - Installation ===
 echo.
 
 REM ------------------------------------------------------------
+REM  0) Pilote NVIDIA (necessaire pour utiliser la carte RTX)
+REM ------------------------------------------------------------
+where nvidia-smi >nul 2>&1
+if errorlevel 1 (
+  echo [warn] "nvidia-smi" introuvable : le pilote NVIDIA ne semble pas installe.
+  echo        Sans pilote, la generation d'images utilisera le CPU ^(tres lent^).
+  echo        Installe le dernier pilote GeForce depuis https://www.nvidia.com/drivers
+  echo        puis relance install.bat. On continue quand meme...
+  echo.
+) else (
+  for /f "tokens=*" %%g in ('nvidia-smi --query-gpu^=name --format^=csv^,noheader 2^>nul') do (
+    echo [gpu] Carte detectee : %%g
+  )
+)
+echo.
+
+REM ------------------------------------------------------------
 REM  1) Python 3.11 ou 3.12 (torch 2.4.1+cu121 n'existe PAS pour 3.13+)
 REM ------------------------------------------------------------
 REM  On cherche un interpreteur COMPATIBLE via le lanceur "py".

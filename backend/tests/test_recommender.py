@@ -32,6 +32,22 @@ def test_high_vram_tier_includes_flux_and_sane_training():
     assert "vit" in rec.training.recommended_architectures
 
 
+def test_16gb_tier_fits_rtx_4060_ti_16gb():
+    # An RTX 4060 Ti 16GB reports ~16.3 GB: FLUX (~22GB) and 70B LLMs must NOT
+    # be recommended, but full SDXL should be.
+    rec = recommend(_hw(16380))
+    assert "flux-schnell" not in rec.image_gen.recommended_models
+    assert "sdxl" in rec.image_gen.recommended_models
+    assert not any("70b" in m for m in rec.agent.recommended_models)
+
+
+def test_8gb_tier_recommends_sdxl_turbo():
+    # An RTX 4060 Ti 8GB reports ~8.1 GB total.
+    rec = recommend(_hw(8188))
+    assert "sdxl-turbo" in rec.image_gen.recommended_models
+    assert rec.image_gen.cfg_scale == 0.0 or rec.image_gen.recommended_steps <= 10
+
+
 def test_cpu_only_tier():
     rec = recommend(_hw(0))
     assert rec.vram_mb == 0

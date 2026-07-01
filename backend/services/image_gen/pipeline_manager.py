@@ -6,6 +6,8 @@ from collections import OrderedDict
 
 from PIL import Image
 
+from core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,8 +74,6 @@ class PipelineManager:
     def _load_pipeline(self, model_id: str, repo_id: str):
         import torch
         from diffusers import AutoPipelineForText2Image
-
-        from core.config import settings
 
         vram_mb = self._get_vram_mb()
         dtype = torch.float16 if vram_mb >= 4096 else torch.float32
@@ -142,7 +142,7 @@ class PipelineManager:
                 pass
 
 
-pipeline_manager = PipelineManager()
+pipeline_manager = PipelineManager(max_loaded=settings.max_pipelines_loaded)
 
 
 def image_to_base64(img: Image.Image, format: str = "JPEG") -> str:
