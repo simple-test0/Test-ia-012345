@@ -125,8 +125,10 @@ class GenerationWorker:
             )
             if job.get("negative_prompt"):
                 generate_kwargs["negative_prompt"] = job["negative_prompt"]
-            if job.get("cfg_scale", 7.5) > 0:
-                generate_kwargs["guidance_scale"] = job["cfg_scale"]
+            # Always pass guidance_scale, including 0: turbo models (SDXL-Turbo,
+            # FLUX schnell) require CFG=0, and omitting it would fall back to the
+            # pipeline default (e.g. 5.0) — degraded output and 2x slower.
+            generate_kwargs["guidance_scale"] = job.get("cfg_scale", 7.5)
 
             result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: pipe(**generate_kwargs)
