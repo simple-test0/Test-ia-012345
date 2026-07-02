@@ -20,6 +20,7 @@ class ModelInfo:
     gated: bool = False
 
 
+# CLAUDE: add new curated models here — append ModelInfo entries
 MODEL_REGISTRY: List[ModelInfo] = [
     ModelInfo(
         id="sd15",
