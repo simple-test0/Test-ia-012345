@@ -150,6 +150,25 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
             use_fp16=True,
             notes="Full SDXL fits comfortably. xformers enabled for peak throughput.",
         )
+    elif vram_mb < 22000:
+        # 12-16 GB cards (e.g. RTX 4060 Ti 16GB): SDXL is very comfortable, but
+        # FLUX (~22GB in fp16) does not fit — don't recommend it here.
+        img = ImageGenRecommendations(
+            recommended_models=[
+                "sdxl",
+                "sdxl-turbo",
+                "sd15",
+            ],
+            max_resolution=(1536, 1536),
+            recommended_steps=30,
+            cfg_scale=7.5,
+            enable_xformers=True,
+            enable_attention_slicing=False,
+            enable_cpu_offload=False,
+            enable_sequential_offload=False,
+            use_fp16=True,
+            notes="Full SDXL runs comfortably with headroom for high resolutions and img2img.",
+        )
     else:
         img = ImageGenRecommendations(
             recommended_models=[
@@ -225,6 +244,19 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
             quantization="q8_0",
             notes="7-8B models at 8-bit, or 13B at 4-bit. Better quality than 4-bit.",
         )
+    elif vram_mb < 24576:
+        # 12-24 GB: 70B models do NOT fit (llama3 70B q4 needs ~40GB).
+        # 12-14B models at 4-bit, or 8B at 8-bit, run fully on-GPU.
+        agent = AgentRecommendations(
+            recommended_models=[
+                "qwen2.5:14b",
+                "mistral-nemo:12b",
+                "llama3.1:8b-instruct-q8_0",
+            ],
+            context_window_tokens=16384,
+            quantization="q4_K_M",
+            notes="12-14B models at 4-bit fit fully in VRAM; 8B at 8-bit for best quality/speed.",
+        )
     else:
         agent = AgentRecommendations(
             recommended_models=[
@@ -234,7 +266,7 @@ def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
             ],
             context_window_tokens=32768,
             quantization="q4_K_M",
-            notes="Large models possible. 34B or 70B at 4-bit quantization.",
+            notes="Large models possible. 34B or 70B at 4-bit quantization (may partially offload to RAM).",
         )
 
     return RecommendationSet(

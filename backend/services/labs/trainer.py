@@ -79,14 +79,17 @@ def _training_process(
         train_size = len(dataset) - val_size
         train_ds, val_ds = random_split(dataset, [train_size, val_size])
 
-        num_workers = min(training_config.get("num_workers", 2), 4)
+        # num_workers must stay 0 here: this code runs in a daemonic subprocess,
+        # and daemonic processes cannot spawn DataLoader worker children
+        # ("daemonic processes are not allowed to have children"). Datasets are
+        # in-memory TensorDatasets anyway, so workers would add nothing.
         batch_size = training_config.get("batch_size", 16)
         train_loader = DataLoader(
             train_ds, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=device.type == "cuda"
+            num_workers=0, pin_memory=device.type == "cuda"
         )
         val_loader = DataLoader(
-            val_ds, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers
+            val_ds, batch_size=batch_size * 2, shuffle=False, num_workers=0
         )
 
         # ── Optimizer + Scheduler ─────────────────────────────────────────────
@@ -120,7 +123,7 @@ def _training_process(
             scheduler = None
 
         criterion = nn.CrossEntropyLoss()
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
         checkpoint_dir_path = Path(checkpoint_dir)
         checkpoint_dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -151,7 +154,7 @@ def _training_process(
 
                 inputs, labels = inputs.to(device), labels.to(device)
 
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with torch.amp.autocast("cuda", enabled=use_amp):
                     outputs = model(inputs)
                     loss = criterion(outputs, labels) / grad_accum
 
@@ -192,7 +195,7 @@ def _training_process(
             with torch.no_grad():
                 for inputs, labels in val_loader:
                     inputs, labels = inputs.to(device), labels.to(device)
-                    with torch.cuda.amp.autocast(enabled=use_amp):
+                    with torch.amp.autocast("cuda", enabled=use_amp):
                         outputs = model(inputs)
                         loss = criterion(outputs, labels)
                     val_loss += loss.item()

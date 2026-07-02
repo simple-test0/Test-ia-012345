@@ -20,6 +20,10 @@ interface ImageModel {
   repo_id: string
   tags?: string[]
   gated?: boolean
+  recommended_steps?: number
+  default_cfg?: number
+  default_width?: number
+  default_height?: number
 }
 
 interface ImageJob {
@@ -213,7 +217,9 @@ function JobCard({ job, onJobCompleted, onJobFailed }: JobCardProps) {
       )}
 
       {job.status === 'failed' && (
-        <p className="text-xs text-red-400">{job.error_message || 'La génération a échoué'}</p>
+        <p className="text-xs text-red-400">
+          {job.error_message ? `Échec : ${job.error_message}` : 'La génération a échoué'}
+        </p>
       )}
 
       <p className="text-[10px] text-gray-600">{new Date(job.created_at).toLocaleString()}</p>
@@ -261,30 +267,45 @@ export default function ImageGenerationPage() {
   useWebSocket(activeJobId ? wsUrl(`/ws/image/${activeJobId}`) : null, {
     onMessage: (raw) => {
       const evt = raw as WsEvent
+      if (!activeJobId) return
       if (evt.type === 'queued') {
         setQueuePosition(evt.position)
       } else if (evt.type === 'started' || evt.type === 'step') {
         // Flip the freshly submitted job to running so its card streams progress.
         setQueuePosition(null)
-        const id = activeJobId
-        if (id) {
-          setJobs((prev) =>
-            prev.map((j) =>
-              j.job_id === id && j.status === 'queued' ? { ...j, status: 'running' as const } : j
-            )
+        setJobs((prev) =>
+          prev.map((j) =>
+            j.job_id === activeJobId && j.status === 'queued'
+              ? { ...j, status: 'running' as const }
+              : j
           )
-        }
+        )
       } else if (evt.type === 'completed') {
+        handleJobCompleted(activeJobId, evt.images)
         setQueuePosition(null)
-        if (activeJobId) handleJobCompleted(activeJobId, evt.images)
         setActiveJobId(null)
       } else if (evt.type === 'error') {
         setQueuePosition(null)
-        if (activeJobId) handleJobFailed(activeJobId, evt.message || 'La génération a échoué')
+        handleJobFailed(activeJobId, evt.message || 'La génération a échoué')
         setActiveJobId(null)
       }
     },
   })
+
+  // Apply a model's recommended settings (steps, CFG, resolution) so that
+  // e.g. picking SDXL-Turbo automatically switches to 4 steps / CFG 0.
+  const applyModelDefaults = (m: ImageModel | undefined) => {
+    if (!m) return
+    if (m.recommended_steps !== undefined) setSteps(m.recommended_steps)
+    if (m.default_cfg !== undefined) setCfgScale(m.default_cfg)
+    if (m.default_width) setWidth(m.default_width)
+    if (m.default_height) setHeight(m.default_height)
+  }
+
+  const selectModel = (id: string, allModels: ImageModel[]) => {
+    setSelectedModel(id)
+    applyModelDefaults(allModels.find((m) => m.id === id))
+  }
 
   // Fetch models
   const refreshModels = (autoSelect = false) =>
@@ -293,7 +314,7 @@ export default function ImageGenerationPage() {
         setModels(data)
         if (autoSelect && !selectedModel) {
           const first = data.find((m) => m.status === 'ready')
-          if (first) setSelectedModel(first.id)
+          if (first) selectModel(first.id, data)
         }
       })
       .catch(() => setError('Failed to load models'))
@@ -542,7 +563,7 @@ export default function ImageGenerationPage() {
               className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-3 pr-8
                 text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
               value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
+              onChange={(e) => selectModel(e.target.value, models)}
             >
               {models.length === 0 && <option value="">No models found</option>}
               {(() => {
