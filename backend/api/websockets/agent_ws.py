@@ -52,11 +52,10 @@ async def agent_websocket(websocket: WebSocket, session_id: str, token: str = ""
                 events = []
 
                 def on_event(event: dict):
+                    # Called from within the event loop (between awaits in
+                    # agent.run), so we can schedule the send directly.
                     events.append(event)
-                    asyncio.get_event_loop().call_soon_threadsafe(
-                        asyncio.ensure_future,
-                        ws_manager.send(session_id, event),
-                    )
+                    asyncio.ensure_future(ws_manager.send(session_id, event))
 
                 assistant_response = await agent.run(messages=messages, on_event=on_event)
 
@@ -64,7 +63,7 @@ async def agent_websocket(websocket: WebSocket, session_id: str, token: str = ""
                 tools_used = list(session.tools_used or [])
                 for ev in events:
                     if ev.get("type") == "tool_call":
-                        tool_name = ev.get("tool")
+                        tool_name = ev.get("tool_name")
                         if tool_name and tool_name not in tools_used:
                             tools_used.append(tool_name)
 

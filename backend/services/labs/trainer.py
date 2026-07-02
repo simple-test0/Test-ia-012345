@@ -34,11 +34,10 @@ def _training_process(
 
     try:
         # ── Build model ──────────────────────────────────────────────────────
-        from services.labs.architecture_registry import get_arch
-        spec = get_arch(arch_id)
-        if spec is None:
+        from services.labs.architecture_registry import build_model, get_arch
+        if get_arch(arch_id) is None:
             raise ValueError(f"Unknown architecture: {arch_id}")
-        model = spec.builder(arch_config)
+        model = build_model(arch_id, arch_config)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
