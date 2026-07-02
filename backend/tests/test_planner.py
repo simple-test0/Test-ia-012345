@@ -1,4 +1,7 @@
+from typing import cast
+
 import services.agent.tools.calculator  # noqa: F401  (registers the tool)
+from services.agent.ollama_client import OllamaClient
 from services.agent.planner import ReactAgent
 
 
@@ -22,9 +25,9 @@ async def test_native_tool_call_then_final_answer():
         ]},
         {"content": "The answer is 4.", "tool_calls": []},
     ])
-    agent = ReactAgent(client=fake, model="x")
+    agent = ReactAgent(client=cast(OllamaClient, fake), model="x")
 
-    events = []
+    events: list = []
     result = await agent.run(messages=[{"role": "user", "content": "2+2?"}], on_event=events.append)
 
     assert result == "The answer is 4."
@@ -44,8 +47,8 @@ async def test_legacy_block_fallback():
          "tool_calls": []},
         {"content": "It is 9.", "tool_calls": []},
     ])
-    agent = ReactAgent(client=fake, model="x")
-    events = []
+    agent = ReactAgent(client=cast(OllamaClient, fake), model="x")
+    events: list = []
     result = await agent.run(messages=[{"role": "user", "content": "3*3?"}], on_event=events.append)
     assert result == "It is 9."
     assert any(e["type"] == "tool_result" and "9" in e["result"] for e in events)
@@ -53,8 +56,8 @@ async def test_legacy_block_fallback():
 
 async def test_direct_answer_no_tools():
     fake = FakeOllama([{"content": "Hello!", "tool_calls": []}])
-    agent = ReactAgent(client=fake, model="x")
-    events = []
+    agent = ReactAgent(client=cast(OllamaClient, fake), model="x")
+    events: list = []
     result = await agent.run(messages=[{"role": "user", "content": "hi"}], on_event=events.append)
     assert result == "Hello!"
     assert [e["type"] for e in events if e["type"] == "token"]  # content emitted as a token

@@ -3,6 +3,7 @@ import sys
 import tempfile
 import textwrap
 from pathlib import Path
+from typing import Optional
 
 from core.config import settings
 from services.agent.tool_registry import register_tool
@@ -48,7 +49,7 @@ def _build_preexec(max_memory_mb: int, cpu_seconds: int):
         "required": ["code"],
     },
 )
-def code_executor(code: str, timeout: int = None) -> str:
+def code_executor(code: str, timeout: Optional[int] = None) -> str:
     if not settings.enable_code_executor:
         return (
             "Code execution is disabled. It runs arbitrary Python without a full "

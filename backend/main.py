@@ -13,27 +13,56 @@ logger = logging.getLogger(__name__)
 
 
 async def _recover_orphaned_jobs() -> None:
-    """Fail jobs left queued/running by a previous process.
+    """Fail records left in a transient state by a previous process.
 
-    The generation queue is in-memory, so those jobs can never resume after a
-    restart — without this they'd show as running forever in the history.
+    The generation queue, training subprocesses and download tasks are all
+    in-memory, so none of them can resume after a restart — without this the
+    corresponding rows would show as running/downloading forever.
     """
     from sqlalchemy import select
 
     from core.database import AsyncSessionLocal
+    from models.dataset import Dataset
+    from models.diffusion_model import DiffusionModel
     from models.image_job import ImageJob
+    from models.training_run import TrainingRun
 
+    interrupted = "Interrompu par un redémarrage du serveur"
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(ImageJob).where(ImageJob.status.in_(["queued", "running"]))
         )
-        orphans = result.scalars().all()
-        for job in orphans:
+        recovered = 0
+        for job in result.scalars().all():
             job.status = "failed"
-            job.error_message = "Interrompu par un redémarrage du serveur"
-        if orphans:
+            job.error_message = interrupted
+            recovered += 1
+
+        result = await db.execute(
+            select(TrainingRun).where(TrainingRun.status.in_(["pending", "running", "paused"]))
+        )
+        for run in result.scalars().all():
+            run.status = "failed"
+            run.error_message = interrupted
+            recovered += 1
+
+        result = await db.execute(select(Dataset).where(Dataset.status == "downloading"))
+        for ds in result.scalars().all():
+            ds.status = "error"
+            ds.error_message = interrupted
+            recovered += 1
+
+        result = await db.execute(
+            select(DiffusionModel).where(DiffusionModel.status == "downloading")
+        )
+        for model in result.scalars().all():
+            model.status = "error"
+            model.error_message = interrupted
+            recovered += 1
+
+        if recovered:
             await db.commit()
-            logger.info(f"Marked {len(orphans)} orphaned job(s) as failed")
+            logger.info(f"Marked {recovered} orphaned record(s) as failed")
 
 
 @asynccontextmanager

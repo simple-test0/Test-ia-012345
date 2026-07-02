@@ -64,9 +64,15 @@ async def execute_tool(name: str, args: dict) -> Any:
         return f"Error: tool '{name}' not found"
     try:
         import asyncio
+        import functools
         if asyncio.iscoroutinefunction(tool.func):
             return await tool.func(**args)
-        return tool.func(**args)
+        # Sync tools may block (e.g. code_executor runs a subprocess for up to
+        # its full timeout) — run them off the event loop so the whole app
+        # doesn't freeze while a tool executes.
+        return await asyncio.get_running_loop().run_in_executor(
+            None, functools.partial(tool.func, **args)
+        )
     except Exception as exc:
         logger.exception(f"Tool {name} raised: {exc}")
         return f"Error executing {name}: {exc}"

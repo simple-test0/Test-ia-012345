@@ -43,7 +43,9 @@ class GenerateRequest(BaseModel):
     height: int = Field(512, ge=64, le=2048)
     steps: int = Field(20, ge=1, le=150)
     cfg_scale: float = Field(7.5, ge=0.0, le=30.0)
-    seed: int = Field(-1)
+    # -1 = random; the upper bound keeps the value within the DB Integer
+    # column and torch.Generator.manual_seed range.
+    seed: int = Field(-1, ge=-1, le=2**31 - 1)
     sampler: str = "DPM++ 2M"
     num_images: int = Field(1, ge=1, le=4)
     # Optional LoRA adapter (HF repo id), applied on top of the base model.
@@ -203,9 +205,10 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
     init_image_path = None
     control_image_path = None
     try:
-        if req.mode == "img2img":
+        # _validate_mode already guaranteed these images are present.
+        if req.mode == "img2img" and req.init_image:
             init_image_path = _save_input_image(req.init_image, job_id, "init")
-        elif req.mode == "controlnet":
+        elif req.mode == "controlnet" and req.control_image:
             control_image_path = _save_input_image(req.control_image, job_id, "control")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -273,9 +276,15 @@ async def hf_search(query: str, limit: int = 25):
     query = (query or "").strip()
     if not query:
         return {"results": []}
-    results = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: search_hf_models(query, limit)
-    )
+    try:
+        results = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: search_hf_models(query, limit)
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Recherche Hugging Face indisponible : {exc}",
+        ) from None
     return {"results": results}
 
 
@@ -329,11 +338,16 @@ async def hf_model_delete(model_id: str, db: AsyncSession = Depends(get_db)):
     if rec is None:
         raise HTTPException(status_code=404, detail="Model not found")
 
-    if rec.local_path:
-        try:
-            shutil.rmtree(Path(rec.local_path), ignore_errors=True)
-        except Exception:
-            pass
+    # local_path points at a snapshot inside the HF cache; removing the whole
+    # repo cache folder also frees the blobs the snapshot links to.
+    from services.image_gen.hf_connector import repo_cache_path
+
+    for path in (repo_cache_path(rec.repo_id), Path(rec.local_path) if rec.local_path else None):
+        if path is not None:
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+            except Exception:
+                pass
 
     await db.delete(rec)
     await db.commit()

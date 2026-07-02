@@ -22,4 +22,6 @@ def test_architecture_registry_imports_without_torch():
 
     archs = list_archs()
     assert {a.id for a in archs} >= {"cnn", "rnn", "lstm", "gru", "transformer", "vit"}
-    assert get_arch("cnn").default_config["num_classes"] == 10
+    cnn = get_arch("cnn")
+    assert cnn is not None
+    assert cnn.default_config["num_classes"] == 10

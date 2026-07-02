@@ -7,7 +7,7 @@ from services.image_gen import hf_connector
 
 
 def test_repo_cache_path_format():
-    p = hf_connector._repo_cache_path("org/Model-Name")
+    p = hf_connector.repo_cache_path("org/Model-Name")
     assert p.name == "models--org--Model-Name"
 
 
