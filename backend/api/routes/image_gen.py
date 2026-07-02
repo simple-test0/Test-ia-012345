@@ -198,7 +198,7 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
     cn_repo = _validate_mode(req, resolved)
 
     job_id = str(uuid.uuid4())
-    seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 32 - 1)
+    seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 31 - 1)
 
     init_image_path = None
     control_image_path = None

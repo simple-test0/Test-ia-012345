@@ -115,7 +115,7 @@ class GenerationWorker:
                 return callback_kwargs
 
             if seed == -1:
-                seed = random.randint(0, 2**32 - 1)
+                seed = random.randint(0, 2**31 - 1)
 
             import torch
             generator = torch.Generator(device="cuda" if torch.cuda.is_available() else "cpu")
