@@ -17,7 +17,7 @@
 - [x] **LoRA** : adaptateur optionnel appliqué au pipeline (déchargé après chaque job).
 
 ### Qualité / Optimisation
-- [x] README, tests pytest (24, sans torch) + marqueur `heavy` pour l'e2e, CI GitHub Actions.
+- [x] README, suite pytest exécutable sans torch + marqueur `heavy` pour l'e2e, CI GitHub Actions.
 - [x] Dockerfile backend & frontend + docker-compose (+ Ollama, proxy nginx).
 - [x] `start.sh` mode prod + warning Ollama.
 - [x] **Migrations DB via Alembic** (migration initiale générée + vérifiée) en plus de
