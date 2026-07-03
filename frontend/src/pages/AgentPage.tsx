@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Send, Plus, ChevronDown, ChevronRight, AlertTriangle, Wrench } from 'lucide-react'
+import { Send, Plus, ChevronDown, ChevronRight, AlertTriangle, Trash2, Wrench } from 'lucide-react'
 import {
   getOllamaModels,
   getTools,
   getSessions,
+  getSession,
   createSession,
+  deleteSession,
 } from '../api/agent'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { wsUrl } from '../api/client'
@@ -322,6 +324,40 @@ export default function AgentPage() {
     }
   }
 
+  const handleSelectSession = async (sessionId: string) => {
+    setSelectedSessionId(sessionId)
+    setMessages([])
+    // Restore the conversation stored server-side for this session.
+    try {
+      const data: { messages?: { role: string; content: string }[] } =
+        await getSession(sessionId)
+      const restored: ChatMessage[] = (data.messages ?? [])
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
+        .map((m) => ({
+          id: nextId(),
+          role: m.role as MessageRole,
+          content: m.content,
+          tool_calls: [],
+        }))
+      setMessages(restored)
+    } catch {
+      setErrorToast("Impossible de charger l'historique de la session")
+    }
+  }
+
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await deleteSession(sessionId)
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId(null)
+        setMessages([])
+      }
+    } catch {
+      setErrorToast('Impossible de supprimer la session')
+    }
+  }
+
   const handleSend = () => {
     const text = inputText.trim()
     if (!text || !selectedSessionId) return
@@ -381,21 +417,30 @@ export default function AgentPage() {
         {/* Session list */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {sessions.map((s) => (
-            <button
+            <div
               key={s.id}
-              className={`w-full rounded-lg px-3 py-2.5 text-left transition-colors
+              className={`group relative rounded-lg transition-colors
                 ${selectedSessionId === s.id
                   ? 'bg-purple-600/30 border border-purple-500/50'
                   : 'hover:bg-gray-800 border border-transparent'
                 }`}
-              onClick={() => {
-                setSelectedSessionId(s.id)
-                setMessages([])
-              }}
             >
-              <p className="text-sm font-medium text-gray-200 truncate">{s.name}</p>
-              <p className="text-xs text-gray-500">{s.message_count} messages</p>
-            </button>
+              <button
+                className="w-full px-3 py-2.5 text-left"
+                onClick={() => handleSelectSession(s.id)}
+              >
+                <p className="text-sm font-medium text-gray-200 truncate pr-6">{s.name}</p>
+                <p className="text-xs text-gray-500">{s.message_count} messages</p>
+              </button>
+              <button
+                className="absolute right-2 top-2.5 hidden rounded p-1 text-gray-500
+                  hover:text-red-400 hover:bg-gray-900/60 group-hover:block"
+                onClick={() => handleDeleteSession(s.id)}
+                aria-label="Supprimer la session"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
           ))}
           {sessions.length === 0 && (
             <p className="px-3 py-2 text-xs text-gray-600">No sessions yet</p>

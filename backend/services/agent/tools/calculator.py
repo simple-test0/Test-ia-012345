@@ -1,11 +1,12 @@
 import ast
 import math
 import operator
+from typing import Any, Callable, Dict
 
 from services.agent.tool_registry import register_tool
 
 # Allowed binary / unary operators.
-_BIN_OPS = {
+_BIN_OPS: Dict[type, Callable[[Any, Any], Any]] = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
     ast.Mult: operator.mul,
@@ -14,7 +15,7 @@ _BIN_OPS = {
     ast.Mod: operator.mod,
     ast.Pow: operator.pow,
 }
-_UNARY_OPS = {
+_UNARY_OPS: Dict[type, Callable[[Any], Any]] = {
     ast.UAdd: operator.pos,
     ast.USub: operator.neg,
 }
@@ -41,10 +42,10 @@ def _eval(node):
             raise ValueError("exponent too large")
         return op(left, right)
     if isinstance(node, ast.UnaryOp):
-        op = _UNARY_OPS.get(type(node.op))
-        if op is None:
+        unary_op = _UNARY_OPS.get(type(node.op))
+        if unary_op is None:
             raise ValueError("unary operator not allowed")
-        return op(_eval(node.operand))
+        return unary_op(_eval(node.operand))
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name) or node.func.id not in _NAMES:
             raise ValueError("function not allowed")

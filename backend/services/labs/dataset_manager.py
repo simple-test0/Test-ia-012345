@@ -55,30 +55,51 @@ async def process_upload(
     task_type: str,
     db_session,
 ) -> None:
-    """Saves uploaded files and updates the DB record."""
+    """Persist uploaded file contents and update the DB record.
+
+    `files` is a list of (filename, content-bytes) tuples: the route reads the
+    UploadFile objects before responding, because Starlette closes them as
+    soon as the request handler returns — a background task reading them
+    afterwards would hit closed files.
+    """
+    from pathlib import Path
+
     from sqlalchemy import select
 
     from models.dataset import Dataset
 
-    dataset_dir = settings.datasets_dir / db_id
-    dataset_dir.mkdir(parents=True, exist_ok=True)
+    async def _update(status: str, error: str = "", **fields) -> None:
+        async with db_session() as db:
+            result = await db.execute(select(Dataset).where(Dataset.id == db_id))
+            rec = result.scalar_one_or_none()
+            if rec:
+                rec.status = status
+                if error:
+                    rec.error_message = error
+                for k, v in fields.items():
+                    setattr(rec, k, v)
+                await db.commit()
 
-    total_bytes = 0
-    num_files = 0
+    try:
+        dataset_dir = settings.datasets_dir / db_id
+        dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    for upload_file in files:
-        dest = dataset_dir / upload_file.filename
-        content = await upload_file.read()
-        dest.write_bytes(content)
-        total_bytes += len(content)
-        num_files += 1
+        total_bytes = 0
+        num_files = 0
+        for filename, content in files:
+            # Path(...).name strips any directory components a client could
+            # smuggle in ("../../x") so files always land inside dataset_dir.
+            safe_name = Path(filename or "").name or f"file_{num_files}"
+            (dataset_dir / safe_name).write_bytes(content)
+            total_bytes += len(content)
+            num_files += 1
 
-    async with db_session() as db:
-        result = await db.execute(select(Dataset).where(Dataset.id == db_id))
-        rec = result.scalar_one_or_none()
-        if rec:
-            rec.status = "ready"
-            rec.local_path = str(dataset_dir)
-            rec.num_samples = num_files
-            rec.size_bytes = total_bytes
-            await db.commit()
+        await _update(
+            "ready",
+            local_path=str(dataset_dir),
+            num_samples=num_files,
+            size_bytes=total_bytes,
+        )
+    except Exception as exc:
+        logger.exception(f"Dataset upload processing failed: {exc}")
+        await _update("error", error=str(exc))

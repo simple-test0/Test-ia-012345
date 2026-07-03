@@ -32,6 +32,16 @@
       `AutoPipelineForImage2Image` (réutilise les poids du pipeline chargé via `from_pipe`).
 - [x] **ControlNet** (canny/depth/pose) pour SD 1.5 et SDXL : upload d'image de contrôle,
       pré-traitement canny local (PIL, sans cv2) ; depth/pose attendent une carte déjà calculée.
+- [x] **Stabilisation (audit complet)** : SQLite en WAL + busy_timeout (plus de
+      « database is locked » entre worker/WS/téléchargements) ; récupération au démarrage
+      étendue aux TrainingRun/Dataset/DiffusionModel bloqués ; upload de dataset lu avant la
+      réponse (les UploadFile sont fermés par Starlette à la fin de la requête) + noms de
+      fichiers assainis + statut `error` en cas d'échec ; références fortes sur toutes les
+      tâches de fond de labs ; run marqué `failed` si le subprocess d'entraînement meurt sans
+      événement terminal + cleanup des ressources ; `stop()` et outils agent synchrones
+      exécutés hors event loop (plus de gel de l'app) ; transaction DB fermée pendant le run
+      de l'agent ; suppression disque des datasets ; borne du seed ; `wss://` sous HTTPS ;
+      historique de session agent rechargé + suppression de session ; export ONNX dans l'UI.
 - [x] **Stabilisation** : récupération des jobs orphelins au démarrage (queue en mémoire),
       correction du `NameError` masquant l'erreur réelle quand le chargement du pipeline échoue,
       référence forte sur les tâches de téléchargement HF (risque de GC en plein download),

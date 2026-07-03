@@ -2,6 +2,7 @@
 import logging
 import multiprocessing as mp
 import time
+from multiprocessing.synchronize import Event as MpEvent
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -16,8 +17,8 @@ def _training_process(
     dataset_path: Optional[str],
     checkpoint_dir: str,
     metric_queue: mp.Queue,
-    stop_event: mp.Event,
-    pause_event: mp.Event,
+    stop_event: MpEvent,
+    pause_event: MpEvent,
 ):
     """Entry point for the training subprocess."""
     import torch
@@ -313,8 +314,8 @@ class TrainingManager:
     def __init__(self):
         self._processes: Dict[str, mp.Process] = {}
         self._queues: Dict[str, mp.Queue] = {}
-        self._stop_events: Dict[str, mp.Event] = {}
-        self._pause_events: Dict[str, mp.Event] = {}
+        self._stop_events: Dict[str, MpEvent] = {}
+        self._pause_events: Dict[str, MpEvent] = {}
 
     def start(
         self,
@@ -377,6 +378,10 @@ class TrainingManager:
 
     def get_queue(self, run_id: str) -> Optional[mp.Queue]:
         return self._queues.get(run_id)
+
+    def is_alive(self, run_id: str) -> bool:
+        p = self._processes.get(run_id)
+        return bool(p and p.is_alive())
 
     def cleanup(self, run_id: str) -> None:
         self.stop(run_id)

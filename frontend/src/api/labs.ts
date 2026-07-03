@@ -14,4 +14,8 @@ export const pauseRun = (id: string) => api.post(`/labs/runs/${id}/pause`).then(
 export const resumeRun = (id: string) => api.post(`/labs/runs/${id}/resume`).then(r => r.data)
 export const stopRun = (id: string) => api.post(`/labs/runs/${id}/stop`).then(r => r.data)
 export const exportRun = (id: string, format: string) =>
-  api.post(`/labs/runs/${id}/export`, { format }).then(r => r.data)
+  api.post(`/labs/runs/${id}/export`, { format }, { timeout: 120000 }).then(r => r.data)
+export const downloadExport = (id: string): Promise<Blob> =>
+  api
+    .get(`/labs/runs/${id}/export/download`, { responseType: 'blob', timeout: 120000 })
+    .then(r => r.data)

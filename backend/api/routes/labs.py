@@ -19,6 +19,15 @@ from services.labs.trainer import training_manager
 
 router = APIRouter(prefix="/labs", tags=["labs"])
 
+# Keep strong references to fire-and-forget tasks: asyncio only holds weak
+# refs, so an unreferenced task can be garbage-collected mid-flight.
+_background_tasks: set = set()
+
+
+def _track_task(task) -> None:
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 # ── Architectures ─────────────────────────────────────────────────────────────
 
@@ -82,8 +91,10 @@ async def download_hf_dataset(req: HFDatasetRequest, db: AsyncSession = Depends(
     db.add(record)
     await db.commit()
 
-    asyncio.create_task(
-        download_huggingface_dataset(ds_id, req.hf_id, req.task_type, AsyncSessionLocal)
+    _track_task(
+        asyncio.create_task(
+            download_huggingface_dataset(ds_id, req.hf_id, req.task_type, AsyncSessionLocal)
+        )
     )
     return {"id": ds_id, "status": "downloading"}
 
@@ -99,6 +110,10 @@ async def upload_dataset(
 
     from services.labs.dataset_manager import process_upload
 
+    # Read the payloads now: Starlette closes UploadFile objects when this
+    # handler returns, so a background task can't read them afterwards.
+    contents = [(f.filename, await f.read()) for f in files]
+
     ds_id = str(uuid.uuid4())
     record = Dataset(
         id=ds_id,
@@ -110,16 +125,28 @@ async def upload_dataset(
     db.add(record)
     await db.commit()
 
-    asyncio.create_task(process_upload(ds_id, files, task_type, AsyncSessionLocal))
+    _track_task(
+        asyncio.create_task(process_upload(ds_id, contents, task_type, AsyncSessionLocal))
+    )
     return {"id": ds_id, "status": "processing"}
 
 
 @router.delete("/datasets/{dataset_id}")
 async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    import shutil
+    from pathlib import Path
+
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     ds = result.scalar_one_or_none()
     if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Free the disk too — but only paths under our datasets directory.
+    if ds.local_path:
+        path = Path(ds.local_path).resolve()
+        if path.is_relative_to(settings.datasets_dir.resolve()):
+            shutil.rmtree(path, ignore_errors=True)
+
     await db.delete(ds)
     await db.commit()
     return {"deleted": dataset_id}
@@ -205,14 +232,14 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
 
     async def _drain_queue():
         from sqlalchemy import select as sel
+        finished = False
         while True:
             try:
-                event = await asyncio.get_event_loop().run_in_executor(
+                event = await asyncio.get_running_loop().run_in_executor(
                     None, lambda: q.get(timeout=1.0)
                 )
             except Exception:
-                p = training_manager._processes.get(run_id)
-                if p and not p.is_alive():
+                if not training_manager.is_alive(run_id):
                     break
                 continue
 
@@ -240,6 +267,7 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
                         rec.completed_at = datetime.utcnow()
                         rec.best_checkpoint_path = event.get("best_checkpoint")
                         await session.commit()
+                finished = True
                 break
 
             elif event.get("type") == "error":
@@ -250,9 +278,30 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
                         rec.status = "failed"
                         rec.error_message = event.get("message")
                         await session.commit()
+                finished = True
                 break
 
-    asyncio.create_task(_drain_queue())
+        if not finished:
+            # The subprocess died without a terminal event (crash, OOM kill,
+            # user stop) — don't leave the run showing "running" forever.
+            async with AsyncSessionLocal() as session:
+                r = await session.execute(sel(TrainingRun).where(TrainingRun.id == run_id))
+                rec = r.scalar_one_or_none()
+                if rec and rec.status in ("pending", "running", "paused"):
+                    rec.status = "failed"
+                    rec.error_message = "Le processus d'entraînement s'est arrêté de façon inattendue"
+                    rec.completed_at = datetime.utcnow()
+                    await session.commit()
+                    await ws_manager.send(
+                        run_id, {"type": "error", "message": rec.error_message}
+                    )
+
+        # Reap the subprocess and drop its queue/events from memory.
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: training_manager.cleanup(run_id)
+        )
+
+    _track_task(asyncio.create_task(_drain_queue()))
 
     return {"id": run_id, "status": "running"}
 
@@ -283,10 +332,15 @@ async def resume_run(run_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/runs/{run_id}/stop")
 async def stop_run(run_id: str, db: AsyncSession = Depends(get_db)):
-    training_manager.stop(run_id)
+    import asyncio
+
+    # stop() joins the subprocess (up to ~10s) — keep that off the event loop.
+    await asyncio.get_running_loop().run_in_executor(
+        None, lambda: training_manager.stop(run_id)
+    )
     result = await db.execute(select(TrainingRun).where(TrainingRun.id == run_id))
     run = result.scalar_one_or_none()
-    if run:
+    if run and run.status in ("pending", "running", "paused"):
         run.status = "cancelled"
         run.completed_at = datetime.utcnow()
         await db.commit()
@@ -307,13 +361,16 @@ async def export_run(run_id: str, req: ExportRequest, db: AsyncSession = Depends
         raise HTTPException(status_code=400, detail="No checkpoint available")
 
     output_dir = str(settings.models_dir / "trained" / run_id / "export")
-    out_path = await export_model(
-        checkpoint_path=run.best_checkpoint_path,
-        arch_id=run.architecture,
-        arch_config=run.arch_config,
-        export_format=req.format,
-        output_dir=output_dir,
-    )
+    try:
+        out_path = await export_model(
+            checkpoint_path=run.best_checkpoint_path,
+            arch_id=run.architecture,
+            arch_config=run.arch_config,
+            export_format=req.format,
+            output_dir=output_dir,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     return {"exported_path": out_path, "format": req.format}
 
 

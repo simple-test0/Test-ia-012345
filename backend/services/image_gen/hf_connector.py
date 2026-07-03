@@ -13,7 +13,7 @@ def _token():
     return settings.huggingface_token or None
 
 
-def _repo_cache_path(repo_id: str) -> Path:
+def repo_cache_path(repo_id: str) -> Path:
     """Path where snapshot_download stores a repo under our cache_dir."""
     folder = "models--" + repo_id.replace("/", "--")
     return settings.models_dir / "diffusion" / folder
@@ -58,7 +58,7 @@ def download_progress(repo_id: str, total_bytes: int) -> int:
     """Coarse 0-100 progress for an in-flight download (best effort)."""
     if total_bytes <= 0:
         return 0
-    current = dir_size_bytes(_repo_cache_path(repo_id))
+    current = dir_size_bytes(repo_cache_path(repo_id))
     return max(0, min(99, int(current * 100 / total_bytes)))
 
 
@@ -158,9 +158,11 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
 
     try:
         def _probe():
+            from typing import Any
+
             from huggingface_hub import model_info
 
-            meta = {
+            meta: dict[str, Any] = {
                 "gated": False, "pipeline_class": None, "tags": None,
                 "downloads": 0, "likes": 0, "total_bytes": 0,
             }
@@ -204,7 +206,7 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
 
             # No `revision` -> always pulls the latest `main` snapshot.
             common = dict(cache_dir=str(diffusion_dir), token=_token())
-            attempts = (
+            attempts: tuple = (
                 dict(variant="fp16", use_safetensors=True),  # smallest: fp16 only
                 dict(use_safetensors=True),                  # repo has no fp16 variant
                 dict(),                                       # last resort: .bin weights

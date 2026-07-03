@@ -9,6 +9,8 @@ import {
   pauseRun,
   resumeRun,
   stopRun,
+  exportRun,
+  downloadExport,
 } from '../api/labs'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { wsUrl } from '../api/client'
@@ -110,6 +112,9 @@ export default function LabsPage() {
   const [dsName, setDsName] = useState('')
   const [dsHfId, setDsHfId] = useState('')
 
+  // Runs currently being exported (id → true)
+  const [exporting, setExporting] = useState<Record<string, boolean>>({})
+
   const refreshDatasets = () =>
     getDatasets().then(setDatasets).catch(() => {})
   const refreshRuns = () =>
@@ -178,6 +183,30 @@ export default function LabsPage() {
       refreshRuns()
     } catch {
       setError('Action impossible')
+    }
+  }
+
+  const handleExport = async (runId: string) => {
+    setExporting((prev) => ({ ...prev, [runId]: true }))
+    setError(null)
+    try {
+      await exportRun(runId, 'onnx')
+      const blob = await downloadExport(runId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `model_${runId}.onnx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail || "Échec de l'export du modèle")
+    } finally {
+      setExporting((prev) => {
+        const next = { ...prev }
+        delete next[runId]
+        return next
+      })
     }
   }
 
@@ -327,6 +356,22 @@ export default function LabsPage() {
                 ) : null}
 
                 {(run.status === 'running' || run.status === 'paused') && <RunMetrics runId={run.id} />}
+
+                {run.status === 'completed' && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleExport(run.id)}
+                      disabled={!!exporting[run.id]}
+                      className="flex items-center gap-1 rounded-lg bg-gray-800 hover:bg-gray-700
+                        disabled:opacity-50 px-2.5 py-1 text-xs text-gray-200"
+                    >
+                      {exporting[run.id]
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Download className="h-3 w-3" />}
+                      Exporter (ONNX)
+                    </button>
+                  </div>
+                )}
 
                 {(run.status === 'running' || run.status === 'paused' || run.status === 'pending') && (
                   <div className="flex gap-2">

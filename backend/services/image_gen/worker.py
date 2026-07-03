@@ -18,7 +18,7 @@ class GenerationWorker:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def run(self) -> None:
-        self._loop = asyncio.get_event_loop()
+        self._loop = asyncio.get_running_loop()
         logger.info("Generation worker started")
         while True:
             job = await self._queue.get()
@@ -71,7 +71,7 @@ class GenerationWorker:
                     logger.info(f"Loaded LoRA {lora}")
                 except Exception as exc:
                     logger.warning(f"Could not load LoRA {lora}: {exc}")
-            loop = self._loop
+            loop = self._loop or asyncio.get_running_loop()
             step_data = {"current": 0}
             # img2img only runs the tail of the schedule (steps × strength).
             total_steps = job["steps"]
@@ -160,7 +160,7 @@ class GenerationWorker:
             else:
                 generate_kwargs["width"], generate_kwargs["height"] = size
 
-            result = await asyncio.get_event_loop().run_in_executor(
+            result = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: pipe(**generate_kwargs)
             )
             images = result.images
@@ -187,7 +187,8 @@ class GenerationWorker:
         duration_ms = int(time.time() * 1000) - start_ms
         status = "completed" if not error_msg else "failed"
 
-        # Produce base64 previews of final images
+        # Produce base64 previews of final images (skip unreadable files — a
+        # null entry would render as a broken <img> in the frontend).
         image_b64s = []
         for p in output_paths:
             try:
@@ -195,7 +196,7 @@ class GenerationWorker:
                 img = PILImage.open(p)
                 image_b64s.append(image_to_data_url(img, "PNG"))
             except Exception:
-                image_b64s.append(None)
+                logger.warning(f"Could not read generated image {p}")
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(ImageJob).where(ImageJob.id == job_id))
