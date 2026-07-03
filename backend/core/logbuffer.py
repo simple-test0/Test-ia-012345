@@ -3,6 +3,16 @@ import logging
 from collections import deque
 from typing import Optional
 
+# Routine polling endpoints — their access-log lines repeat every few seconds
+# and would drown the Console in noise.
+_NOISY_PATHS = (
+    "/health",
+    "/api/v1/hardware/info",
+    "/api/v1/hardware/recommendations",
+    "/api/v1/image/pipelines",
+    "/api/v1/system/logs",
+)
+
 
 class RingBufferLogHandler(logging.Handler):
     """Keep the last N log records in memory and stream new ones to the
@@ -29,6 +39,10 @@ class RingBufferLogHandler(logging.Handler):
         try:
             message = self.format(record)
         except Exception:
+            return
+        # Skip the frontend's routine polling: it repeats every few seconds
+        # and buries the interesting lines.
+        if record.name == "uvicorn.access" and any(p in message for p in _NOISY_PATHS):
             return
         self._seq += 1
         entry = {

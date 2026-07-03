@@ -2,7 +2,7 @@ import { useHardwareInfo } from '../../hooks/useHardwareInfo'
 import { Cpu, MemoryStick } from 'lucide-react'
 
 export default function HardwareBadge() {
-  const { hardware } = useHardwareInfo(5000)
+  const { hardware } = useHardwareInfo(10000)
 
   if (!hardware) {
     return <span className="text-xs text-gray-600">No hardware info</span>
