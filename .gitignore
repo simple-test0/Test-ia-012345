@@ -43,6 +43,12 @@ Thumbs.db
 .idea/
 *.swp
 
+# Test / coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 # Logs
 *.log
 logs/
