@@ -4,6 +4,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import ImageGenerationPage from './pages/ImageGenerationPage'
 import AgentPage from './pages/AgentPage'
 import LabsPage from './pages/LabsPage'
+import ConsolePage from './pages/ConsolePage'
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
             <Route path="image" element={<ImageGenerationPage />} />
             <Route path="agent" element={<AgentPage />} />
             <Route path="labs" element={<LabsPage />} />
+            <Route path="console" element={<ConsolePage />} />
           </Route>
         </Routes>
       </BrowserRouter>

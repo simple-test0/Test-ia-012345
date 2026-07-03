@@ -97,6 +97,8 @@ REM  5) Scripts de supervision : chaque serveur est relance
 REM     automatiquement 3 s apres un arret/crash.
 REM ------------------------------------------------------------
 if not exist "%RUNDIR%" mkdir "%RUNDIR%" >nul 2>&1
+REM Un arret via le bouton de l'interface laisse un stop.flag : on repart propre.
+if exist "%RUNDIR%\stop.flag" del "%RUNDIR%\stop.flag" >nul 2>&1
 
 (
   echo @echo off
@@ -104,9 +106,11 @@ if not exist "%RUNDIR%" mkdir "%RUNDIR%" >nul 2>&1
   echo cd /d "%BACKEND%"
   echo :loop
   echo .venv\Scripts\python.exe -m uvicorn main:app %UVICORN_ARGS%
+  echo if exist "%RUNDIR%\stop.flag" exit
   echo echo.
   echo echo [backend] Serveur arrete. Redemarrage dans 3 s... ^(ferme cette fenetre pour arreter^)
   echo timeout /t 3
+  echo if exist "%RUNDIR%\stop.flag" exit
   echo goto loop
 ) > "%RUNDIR%\backend_loop.bat"
 
@@ -116,9 +120,11 @@ if not exist "%RUNDIR%" mkdir "%RUNDIR%" >nul 2>&1
   echo cd /d "%FRONTEND%"
   echo :loop
   echo call npm run dev
+  echo if exist "%RUNDIR%\stop.flag" exit
   echo echo.
   echo echo [frontend] Serveur arrete. Redemarrage dans 3 s... ^(ferme cette fenetre pour arreter^)
   echo timeout /t 3
+  echo if exist "%RUNDIR%\stop.flag" exit
   echo goto loop
 ) > "%RUNDIR%\frontend_loop.bat"
 

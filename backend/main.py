@@ -11,6 +11,16 @@ from core.database import init_db
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# In-memory log buffer feeding the Console page (REST backlog + WS tail).
+# uvicorn's own loggers don't propagate to root, so attach to them explicitly.
+from core.logbuffer import log_buffer  # noqa: E402
+
+logging.getLogger().addHandler(log_buffer)
+for _name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    _lg = logging.getLogger(_name)
+    if log_buffer not in _lg.handlers:
+        _lg.addHandler(log_buffer)
+
 
 async def _recover_orphaned_jobs() -> None:
     """Fail records left in a transient state by a previous process.
@@ -68,6 +78,7 @@ async def _recover_orphaned_jobs() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dirs()
+    log_buffer.set_loop(asyncio.get_running_loop())
     await init_db()
     await _recover_orphaned_jobs()
 
@@ -115,7 +126,7 @@ app.add_middleware(
 # REST routes — CLAUDE: add new routers here with include_router
 from fastapi import Depends  # noqa: E402
 
-from api.routes import agent, hardware, image_gen, labs  # noqa: E402
+from api.routes import agent, hardware, image_gen, labs, system  # noqa: E402
 from core.security import require_api_token  # noqa: E402
 
 _auth = [Depends(require_api_token)]
@@ -123,15 +134,18 @@ app.include_router(hardware.router, prefix="/api/v1", dependencies=_auth)
 app.include_router(image_gen.router, prefix="/api/v1", dependencies=_auth)
 app.include_router(agent.router, prefix="/api/v1", dependencies=_auth)
 app.include_router(labs.router, prefix="/api/v1", dependencies=_auth)
+app.include_router(system.router, prefix="/api/v1", dependencies=_auth)
 
 # WebSocket routes
 from api.websockets.agent_ws import ws_router as agent_ws  # noqa: E402
 from api.websockets.image_ws import ws_router as image_ws  # noqa: E402
+from api.websockets.logs_ws import ws_router as logs_ws  # noqa: E402
 from api.websockets.training_ws import ws_router as training_ws  # noqa: E402
 
 app.include_router(image_ws)
 app.include_router(agent_ws)
 app.include_router(training_ws)
+app.include_router(logs_ws)
 
 
 @app.get("/health")
