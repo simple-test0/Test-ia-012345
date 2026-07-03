@@ -47,6 +47,8 @@ _ADDED_COLUMNS = {
         ("controlnet_type", "VARCHAR(16)"),
         ("init_image_path", "TEXT"),
         ("control_image_path", "TEXT"),
+        ("upscale_factor", "FLOAT"),
+        ("upscale_strength", "FLOAT"),
     ],
 }
 

@@ -119,6 +119,11 @@ class PipelineManager:
             use_safetensors=True,
             cache_dir=str(settings.models_dir / "diffusion"),
             token=settings.huggingface_token or None,
+            # The SD 1.5 safety checker false-positives constantly and replaces
+            # the output with a black image; this is a local app, disable it.
+            # (Pipelines without one, e.g. SDXL, ignore these kwargs.)
+            safety_checker=None,
+            requires_safety_checker=False,
         )
 
         extra = {}
@@ -183,14 +188,40 @@ class PipelineManager:
             pass
         return 0
 
+    async def loaded_ids(self) -> list[str]:
+        """model_ids of the pipelines currently resident in memory."""
+        async with self._lock:
+            return sorted({model_id for (model_id, _mode, _cn) in self._loaded})
+
+    async def unload(self, model_id: str) -> int:
+        """Free every pipeline of a model (all modes); returns how many."""
+        async with self._lock:
+            keys = [k for k in self._loaded if k[0] == model_id]
+            for k in keys:
+                pipe = self._loaded.pop(k)
+                del pipe
+            if keys:
+                logger.info(f"Unloaded pipeline(s) for {model_id}")
+                self._free_memory()
+            return len(keys)
+
+    @staticmethod
+    def _free_memory() -> None:
+        # The pipeline graph holds reference cycles — collect before asking
+        # CUDA to actually release the freed VRAM.
+        import gc
+
+        gc.collect()
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     async def unload_all(self) -> None:
         async with self._lock:
             self._loaded.clear()
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
+            self._free_memory()
 
 
 pipeline_manager = PipelineManager(max_loaded=settings.max_pipelines_loaded)

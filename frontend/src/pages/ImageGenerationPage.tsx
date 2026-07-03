@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, ImageIcon, ChevronDown, Plus } from 'lucide-react'
-import { generateImage, getModels, getJobs, getHFModelStatus } from '../api/image'
+import { Loader2, ImageIcon, ChevronDown, Plus, Trash2, HardDriveDownload, HardDriveUpload } from 'lucide-react'
+import {
+  generateImage,
+  getModels,
+  getJobs,
+  getHFModelStatus,
+  deleteJob,
+  getLoadedPipelines,
+  loadModel,
+  unloadModel,
+} from '../api/image'
 import type { GenerationMode, ControlNetType } from '../api/image'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { wsUrl } from '../api/client'
@@ -54,6 +63,9 @@ interface GenerateParams {
   strength?: number
   controlnet_type?: ControlNetType
   control_image?: string
+  upscale?: boolean
+  upscale_factor?: number
+  upscale_strength?: number
 }
 
 interface WsStepEvent {
@@ -83,7 +95,21 @@ interface WsStartedEvent {
   job_id: string
 }
 
-type WsEvent = WsStepEvent | WsCompletedEvent | WsQueueEvent | WsErrorEvent | WsStartedEvent
+interface WsUpscalingEvent {
+  type: 'upscaling'
+  current: number
+  total: number
+  target_width: number
+  target_height: number
+}
+
+type WsEvent =
+  | WsStepEvent
+  | WsCompletedEvent
+  | WsQueueEvent
+  | WsErrorEvent
+  | WsStartedEvent
+  | WsUpscalingEvent
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -122,6 +148,7 @@ function ActiveJobProgress({ jobId, onCompleted, onFailed }: ActiveJobProgressPr
   const [step, setStep] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
   const [preview, setPreview] = useState<string | null>(null)
+  const [upscaling, setUpscaling] = useState<WsUpscalingEvent | null>(null)
   const onCompletedRef = useRef(onCompleted)
   onCompletedRef.current = onCompleted
   const onFailedRef = useRef(onFailed)
@@ -134,6 +161,9 @@ function ActiveJobProgress({ jobId, onCompleted, onFailed }: ActiveJobProgressPr
         setStep(evt.step)
         setTotalSteps(evt.total_steps)
         if (evt.preview) setPreview(evt.preview)
+      } else if (evt.type === 'upscaling') {
+        setUpscaling(evt)
+        setStep(0)
       } else if (evt.type === 'completed') {
         onCompletedRef.current(evt.images)
       } else if (evt.type === 'error') {
@@ -146,6 +176,11 @@ function ActiveJobProgress({ jobId, onCompleted, onFailed }: ActiveJobProgressPr
 
   return (
     <div className="mt-2 space-y-2">
+      {upscaling && (
+        <p className="text-[10px] text-purple-300">
+          Upscale {upscaling.current}/{upscaling.total} → {upscaling.target_width}×{upscaling.target_height}
+        </p>
+      )}
       <div className="flex items-center justify-between text-xs text-gray-400">
         <span>Step {step} / {totalSteps}</span>
         <span>{pct}%</span>
@@ -173,16 +208,47 @@ interface JobCardProps {
   job: ImageJob
   onJobCompleted: (jobId: string, images: string[]) => void
   onJobFailed: (jobId: string, message: string) => void
+  onDelete: (jobId: string) => void
 }
 
-function JobCard({ job, onJobCompleted, onJobFailed }: JobCardProps) {
+function JobCard({ job, onJobCompleted, onJobFailed, onDelete }: JobCardProps) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const deletable = job.status === 'completed' || job.status === 'failed'
+
   return (
-    <div className="rounded-xl bg-gray-900 border border-gray-800 p-3 flex flex-col gap-2">
+    <div className="group rounded-xl bg-gray-900 border border-gray-800 p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs text-gray-300 line-clamp-2 flex-1">{job.prompt}</p>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_COLORS[job.status]}`}>
           {job.status}
         </span>
+        {deletable && (
+          confirmDelete ? (
+            <span className="flex shrink-0 items-center gap-1">
+              <button
+                onClick={() => onDelete(job.job_id)}
+                className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-red-500"
+              >
+                Supprimer
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400 hover:bg-gray-800"
+              >
+                Non
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Supprimer cette génération et ses images"
+              className="shrink-0 rounded p-1 text-gray-600 opacity-0 transition-opacity
+                group-hover:opacity-100 hover:bg-gray-800 hover:text-red-400"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )
+        )}
       </div>
 
       {job.status === 'running' && (
@@ -251,6 +317,11 @@ export default function ImageGenerationPage() {
   const [cnType, setCnType] = useState<ControlNetType>('canny')
   const [controlImage, setControlImage] = useState<string | null>(null)
 
+  // Hires-fix upscale (txt2img only)
+  const [upscale, setUpscale] = useState(false)
+  const [upscaleFactor, setUpscaleFactor] = useState(2)
+  const [upscaleStrength, setUpscaleStrength] = useState(0.35)
+
   // UI state
   const [loading, setLoading] = useState(false)
   const [queuePosition, setQueuePosition] = useState<number | null>(null)
@@ -263,6 +334,10 @@ export default function ImageGenerationPage() {
   // Hugging Face model browser + download tracking
   const [showBrowser, setShowBrowser] = useState(false)
   const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({})
+
+  // Manual pipeline (VRAM) management
+  const [loadedModels, setLoadedModels] = useState<string[]>([])
+  const [pipelineBusy, setPipelineBusy] = useState<string | null>(null)
 
   useWebSocket(activeJobId ? wsUrl(`/ws/image/${activeJobId}`) : null, {
     onMessage: (raw) => {
@@ -372,6 +447,58 @@ export default function ImageGenerationPage() {
       .catch(() => {})
   }, [])
 
+  // Track which pipelines sit in VRAM (loads also happen during generation).
+  useEffect(() => {
+    const tick = () =>
+      getLoadedPipelines()
+        .then((d) => {
+          setLoadedModels(d.loaded)
+          setPipelineBusy((busy) => (busy && d.loaded.includes(busy) ? null : busy))
+        })
+        .catch(() => {})
+    tick()
+    const interval = setInterval(tick, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const handleLoadModel = async (modelId: string) => {
+    setPipelineBusy(modelId)
+    try {
+      const res = await loadModel(modelId)
+      if (res.status === 'loaded') {
+        setPipelineBusy(null)
+        setLoadedModels((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]))
+      } else {
+        toast.success('Chargement lancé — suis la progression dans la Console.')
+      }
+    } catch (e) {
+      setPipelineBusy(null)
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(detail || 'Impossible de charger le modèle')
+    }
+  }
+
+  const handleUnloadModel = async (modelId: string) => {
+    try {
+      await unloadModel(modelId)
+      setLoadedModels((prev) => prev.filter((id) => id !== modelId))
+      toast.success('Modèle déchargé — VRAM libérée.')
+    } catch {
+      toast.error('Impossible de décharger le modèle')
+    }
+  }
+
+  const handleDeleteJob = async (jobId: string) => {
+    try {
+      await deleteJob(jobId)
+      setJobs((prev) => prev.filter((j) => j.job_id !== jobId))
+      toast.success('Génération supprimée.')
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(detail || 'Impossible de supprimer cette génération')
+    }
+  }
+
   const canGenerate =
     prompt.trim() !== '' &&
     (mode !== 'img2img' || initImage !== null) &&
@@ -400,6 +527,11 @@ export default function ImageGenerationPage() {
       ...(mode === 'controlnet' && {
         controlnet_type: cnType,
         control_image: controlImage ?? undefined,
+      }),
+      ...(mode === 'txt2img' && upscale && {
+        upscale: true,
+        upscale_factor: upscaleFactor,
+        upscale_strength: upscaleStrength,
       }),
     }
 
@@ -622,6 +754,71 @@ export default function ImageGenerationPage() {
               </span>
             ) : null
           })()}
+
+          {/* Manual VRAM load/unload for the selected model */}
+          {selectedModel && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {loadedModels.includes(selectedModel) ? (
+                <>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/15
+                    border border-green-500/30 px-2 py-0.5 text-[10px] text-green-300">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
+                    Chargé en VRAM
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleUnloadModel(selectedModel)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-gray-700
+                      px-2 py-1 text-[10px] text-gray-300 hover:bg-gray-800 transition-colors"
+                  >
+                    <HardDriveUpload className="h-3 w-3" />
+                    Décharger
+                  </button>
+                </>
+              ) : pipelineBusy === selectedModel ? (
+                <button
+                  type="button"
+                  onClick={() => setPipelineBusy(null)}
+                  title="Le chargement continue en arrière-plan — cliquer pour masquer"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/15
+                    border border-purple-500/30 px-2 py-0.5 text-[10px] text-purple-300"
+                >
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Chargement en VRAM…
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleLoadModel(selectedModel)}
+                  title="Précharge le modèle pour que la première génération soit instantanée"
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-700
+                    px-2 py-1 text-[10px] text-gray-300 hover:bg-gray-800 transition-colors"
+                >
+                  <HardDriveDownload className="h-3 w-3" />
+                  Charger en VRAM
+                </button>
+              )}
+            </div>
+          )}
+          {loadedModels.filter((id) => id !== selectedModel).length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-gray-500">
+              Aussi en VRAM :
+              {loadedModels.filter((id) => id !== selectedModel).map((id) => (
+                <span key={id} className="inline-flex items-center gap-1 rounded-full border
+                  border-gray-700 bg-gray-900 px-2 py-0.5 text-gray-300">
+                  {models.find((m) => m.id === id)?.name ?? id}
+                  <button
+                    type="button"
+                    onClick={() => handleUnloadModel(id)}
+                    title="Décharger de la VRAM"
+                    className="text-gray-500 hover:text-red-400"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Sampler */}
@@ -699,6 +896,63 @@ export default function ImageGenerationPage() {
             </div>
           </div>
         </div>
+
+        {/* Upscale (hires fix) — txt2img only */}
+        {mode === 'txt2img' && (
+          <div className="flex flex-col gap-2 rounded-xl bg-gray-900 border border-gray-800 p-3">
+            <label className="flex cursor-pointer items-center justify-between">
+              <span className="text-xs font-medium text-gray-400">
+                Upscale <span className="text-gray-600">(génère puis agrandit et raffine)</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={upscale}
+                onChange={(e) => setUpscale(e.target.checked)}
+                className="h-4 w-4 accent-purple-500 cursor-pointer"
+              />
+            </label>
+            {upscale && (
+              <>
+                <div className="flex items-center gap-1">
+                  {[1.5, 2, 3].map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setUpscaleFactor(f)}
+                      className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+                        upscaleFactor === f
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:text-gray-200'
+                      }`}
+                    >
+                      ×{f}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-600">
+                  {width}×{height} → {Math.min(2048, Math.floor(width * upscaleFactor / 8) * 8)}×
+                  {Math.min(2048, Math.floor(height * upscaleFactor / 8) * 8)}
+                </p>
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between">
+                    <label className="text-xs font-medium text-gray-400">
+                      Raffinement <span className="text-gray-600">(détails ajoutés)</span>
+                    </label>
+                    <span className="text-xs text-purple-400 font-mono">{upscaleStrength.toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range" min={0.05} max={0.9} step={0.05} value={upscaleStrength}
+                    onChange={(e) => setUpscaleStrength(Number(e.target.value))}
+                    className="w-full accent-purple-500 cursor-pointer"
+                  />
+                  <p className="text-[10px] text-gray-600">
+                    Faible = fidèle à l'image de base, élevé = plus de détails inventés.
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Seed */}
         <div className="flex flex-col gap-1">
@@ -792,6 +1046,7 @@ export default function ImageGenerationPage() {
                 job={job}
                 onJobCompleted={handleJobCompleted}
                 onJobFailed={handleJobFailed}
+                onDelete={handleDeleteJob}
               />
             ))}
           </div>

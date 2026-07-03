@@ -23,6 +23,9 @@ export const generateImage = (params: {
   controlnet_type?: ControlNetType
   control_image?: string // base64 data URL
   preprocess?: boolean
+  upscale?: boolean
+  upscale_factor?: number
+  upscale_strength?: number
 }) => api.post('/image/generate', params).then(r => r.data)
 
 export const getJobs = (limit = 20, offset = 0) =>
@@ -30,6 +33,20 @@ export const getJobs = (limit = 20, offset = 0) =>
 
 export const getJob = (jobId: string) =>
   api.get(`/image/jobs/${jobId}`).then(r => r.data)
+
+export const deleteJob = (jobId: string) =>
+  api.delete(`/image/jobs/${jobId}`).then(r => r.data)
+
+// ── Manual pipeline (VRAM) management ───────────────────────────────────────
+
+export const getLoadedPipelines = (): Promise<{ loaded: string[] }> =>
+  api.get('/image/pipelines').then(r => r.data)
+
+export const loadModel = (modelId: string): Promise<{ status: string }> =>
+  api.post(`/image/models/${modelId}/load`).then(r => r.data)
+
+export const unloadModel = (modelId: string): Promise<{ status: string }> =>
+  api.post(`/image/models/${modelId}/unload`).then(r => r.data)
 
 // ── Hugging Face connector ──────────────────────────────────────────────────
 

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 import shutil
 import uuid
@@ -27,6 +28,8 @@ from services.image_gen.modes import (
     decode_image_payload,
     detect_family,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
 
@@ -60,6 +63,11 @@ class GenerateRequest(BaseModel):
     # canny control images are preprocessed server-side unless disabled
     # (depth/pose always expect a ready-made control map).
     preprocess: bool = True
+    # Hires-fix upscale: generate at width×height then refine with an img2img
+    # pass at ×upscale_factor (txt2img only). Low strength = faithful upscale.
+    upscale: bool = False
+    upscale_factor: float = Field(2.0, ge=1.25, le=4.0)
+    upscale_strength: float = Field(0.35, ge=0.05, le=0.9)
 
 
 class HFModelDownloadRequest(BaseModel):
@@ -199,6 +207,11 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
 
     cn_repo = _validate_mode(req, resolved)
 
+    if req.upscale and req.mode != "txt2img":
+        raise HTTPException(
+            status_code=400, detail="L'upscale n'est disponible qu'en mode Texte → Image"
+        )
+
     job_id = str(uuid.uuid4())
     seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 31 - 1)
 
@@ -231,6 +244,8 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         controlnet_type=req.controlnet_type if req.mode == "controlnet" else None,
         init_image_path=init_image_path,
         control_image_path=control_image_path,
+        upscale_factor=req.upscale_factor if req.upscale else None,
+        upscale_strength=req.upscale_strength if req.upscale else None,
     )
     db.add(db_job)
     await db.commit()
@@ -257,6 +272,9 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "controlnet_type": req.controlnet_type,
         "controlnet_repo": cn_repo,
         "preprocess": req.preprocess,
+        "upscale": req.upscale,
+        "upscale_factor": req.upscale_factor,
+        "upscale_strength": req.upscale_strength,
     }
     await generation_queue.put(queue_job)
 
@@ -267,6 +285,52 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "queue_size": queue_size,
         "queue_position": queue_size,
     }
+
+
+# ── Manual pipeline management (load / unload from the UI) ─────────────────────
+
+@router.get("/pipelines")
+async def loaded_pipelines():
+    from services.image_gen.pipeline_manager import pipeline_manager
+
+    return {"loaded": await pipeline_manager.loaded_ids()}
+
+
+@router.post("/models/{model_id}/load")
+async def load_model(model_id: str, db: AsyncSession = Depends(get_db)):
+    """Preload a model into VRAM (downloads it first if needed).
+
+    Loading takes seconds to minutes — it runs in the background; poll
+    GET /image/pipelines (or watch the Console) to see when it lands.
+    """
+    from services.image_gen.pipeline_manager import pipeline_manager
+
+    resolved = await resolve_model(model_id, db)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    if model_id in await pipeline_manager.loaded_ids():
+        return {"status": "loaded"}
+
+    async def _load():
+        try:
+            await pipeline_manager.get_pipeline(model_id, resolved.repo_id)
+            logger.info(f"Modèle {model_id} chargé (demande manuelle)")
+        except Exception:
+            logger.exception(f"Échec du chargement manuel du modèle {model_id}")
+
+    task = asyncio.create_task(_load())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"status": "loading"}
+
+
+@router.post("/models/{model_id}/unload")
+async def unload_model(model_id: str):
+    from services.image_gen.pipeline_manager import pipeline_manager
+
+    count = await pipeline_manager.unload(model_id)
+    return {"status": "unloaded" if count else "not_loaded"}
 
 
 # ── Hugging Face connector ──────────────────────────────────────────────────────
@@ -410,6 +474,31 @@ async def list_jobs(
     ]
 
 
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a generation and its image files from disk."""
+    result = await db.execute(select(ImageJob).where(ImageJob.id == job_id))
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("queued", "running"):
+        raise HTTPException(
+            status_code=409, detail="Génération en cours — attends la fin avant de supprimer"
+        )
+
+    paths = list(job.output_paths or []) + [job.init_image_path, job.control_image_path]
+    for p in paths:
+        if p:
+            try:
+                Path(p).unlink(missing_ok=True)
+            except OSError:
+                logger.warning(f"Impossible de supprimer le fichier {p}")
+
+    await db.delete(job)
+    await db.commit()
+    return {"deleted": job_id}
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(ImageJob).where(ImageJob.id == job_id))
@@ -423,6 +512,8 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "model_id": job.model_id,
         "mode": job.mode,
         "strength": job.strength,
+        "upscale_factor": job.upscale_factor,
+        "upscale_strength": job.upscale_strength,
         "controlnet_type": job.controlnet_type,
         "prompt": job.prompt,
         "negative_prompt": job.negative_prompt,

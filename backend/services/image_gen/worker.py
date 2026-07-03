@@ -31,6 +31,59 @@ class GenerationWorker:
             finally:
                 self._queue.task_done()
 
+    async def _upscale_images(self, job, images, generator, step_callback, step_data):
+        """Refine images at a higher resolution (hires-fix second pass)."""
+        job_id = job["id"]
+        factor = float(job.get("upscale_factor") or 2.0)
+        strength = float(job.get("upscale_strength") or 0.35)
+        # Stay on the pipeline's 8px grid and within the request size cap.
+        target_w = min(2048, int(job["width"] * factor) // 8 * 8)
+        target_h = min(2048, int(job["height"] * factor) // 8 * 8)
+
+        logger.info(
+            f"Upscale hires-fix: {job['width']}x{job['height']} -> {target_w}x{target_h}"
+            f" (strength={strength})"
+        )
+        up_pipe = await pipeline_manager.get_pipeline(
+            job["model_id"], job["repo_id"], mode="img2img"
+        )
+        if job.get("sampler"):
+            apply_sampler(up_pipe, job["sampler"])
+
+        # The refinement pass only runs steps × strength of the schedule.
+        refine_steps = job["steps"]
+        step_data["total"] = max(1, int(round(refine_steps * strength)))
+
+        upscaled = []
+        for i, img in enumerate(images):
+            await ws_manager.send(job_id, {
+                "type": "upscaling",
+                "current": i + 1,
+                "total": len(images),
+                "target_width": target_w,
+                "target_height": target_h,
+            })
+            from PIL import Image as PILImage
+
+            resized = img.resize((target_w, target_h), PILImage.LANCZOS)
+            kwargs = dict(
+                prompt=job["prompt"],
+                image=resized,
+                strength=strength,
+                num_inference_steps=refine_steps,
+                generator=generator,
+                guidance_scale=job.get("cfg_scale", 7.5),
+                callback_on_step_end=step_callback,
+                callback_on_step_end_tensor_inputs=["latents"],
+            )
+            if job.get("negative_prompt"):
+                kwargs["negative_prompt"] = job["negative_prompt"]
+            result = await asyncio.get_running_loop().run_in_executor(
+                None, lambda kw=kwargs: up_pipe(**kw)
+            )
+            upscaled.extend(result.images)
+        return upscaled
+
     async def _process(self, job: dict) -> None:
         job_id = job["id"]
         model_id = job["model_id"]
@@ -72,11 +125,12 @@ class GenerationWorker:
                 except Exception as exc:
                     logger.warning(f"Could not load LoRA {lora}: {exc}")
             loop = self._loop or asyncio.get_running_loop()
-            step_data = {"current": 0}
             # img2img only runs the tail of the schedule (steps × strength).
+            # "total" is mutable: the hires-fix pass rewrites it for phase 2.
             total_steps = job["steps"]
             if mode == "img2img":
                 total_steps = max(1, int(round(total_steps * (job.get("strength") or 0.8))))
+            step_data = {"current": 0, "total": total_steps}
 
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 step_data["current"] = step_index + 1
@@ -107,7 +161,7 @@ class GenerationWorker:
                     ws_manager.send(job_id, {
                         "type": "step",
                         "step": step_data["current"],
-                        "total_steps": total_steps,
+                        "total_steps": step_data["total"],
                         "preview": preview_b64,
                     }),
                     loop,
@@ -164,6 +218,13 @@ class GenerationWorker:
                 None, lambda: pipe(**generate_kwargs)
             )
             images = result.images
+
+            # Hires-fix: upscale each image then refine it with an img2img
+            # pass on the same model (shared weights — no extra VRAM).
+            if job.get("upscale") and mode == "txt2img":
+                images = await self._upscale_images(
+                    job, images, generator, step_callback, step_data
+                )
 
             settings.images_dir.mkdir(parents=True, exist_ok=True)
             for i, img in enumerate(images):

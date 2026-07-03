@@ -29,6 +29,9 @@ class ImageJob(Base):
     # Generation mode: txt2img (default), img2img, controlnet.
     mode: Mapped[str] = mapped_column(String(16), default="txt2img")
     strength: Mapped[Optional[float]] = mapped_column(nullable=True)
+    # Hires-fix upscale: generate at width×height, then refine at ×factor.
+    upscale_factor: Mapped[Optional[float]] = mapped_column(nullable=True)
+    upscale_strength: Mapped[Optional[float]] = mapped_column(nullable=True)
     controlnet_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     init_image_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     control_image_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
