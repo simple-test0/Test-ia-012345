@@ -99,17 +99,19 @@ REM ------------------------------------------------------------
 if not exist "%RUNDIR%" mkdir "%RUNDIR%" >nul 2>&1
 REM Un arret via le bouton de l'interface laisse un stop.flag : on repart propre.
 if exist "%RUNDIR%\stop.flag" del "%RUNDIR%\stop.flag" >nul 2>&1
+REM Nouveaux logs a chaque session (les serveurs tournent en fenetres cachees).
+if exist "%RUNDIR%\backend.log" del "%RUNDIR%\backend.log" >nul 2>&1
+if exist "%RUNDIR%\frontend.log" del "%RUNDIR%\frontend.log" >nul 2>&1
 
 (
   echo @echo off
   echo title AI Studio - Backend
   echo cd /d "%BACKEND%"
   echo :loop
-  echo .venv\Scripts\python.exe -m uvicorn main:app %UVICORN_ARGS%
+  echo .venv\Scripts\python.exe -m uvicorn main:app %UVICORN_ARGS% ^>^> "%RUNDIR%\backend.log" 2^>^&1
   echo if exist "%RUNDIR%\stop.flag" exit
-  echo echo.
-  echo echo [backend] Serveur arrete. Redemarrage dans 3 s... ^(ferme cette fenetre pour arreter^)
-  echo timeout /t 3
+  echo echo [%%date%% %%time%%] [backend] serveur arrete, redemarrage dans 3 s ^>^> "%RUNDIR%\backend.log"
+  echo timeout /t 3 /nobreak ^>nul
   echo if exist "%RUNDIR%\stop.flag" exit
   echo goto loop
 ) > "%RUNDIR%\backend_loop.bat"
@@ -119,11 +121,10 @@ if exist "%RUNDIR%\stop.flag" del "%RUNDIR%\stop.flag" >nul 2>&1
   echo title AI Studio - Frontend
   echo cd /d "%FRONTEND%"
   echo :loop
-  echo call npm run dev
+  echo call npm run dev ^>^> "%RUNDIR%\frontend.log" 2^>^&1
   echo if exist "%RUNDIR%\stop.flag" exit
-  echo echo.
-  echo echo [frontend] Serveur arrete. Redemarrage dans 3 s... ^(ferme cette fenetre pour arreter^)
-  echo timeout /t 3
+  echo echo [%%date%% %%time%%] [frontend] serveur arrete, redemarrage dans 3 s ^>^> "%RUNDIR%\frontend.log"
+  echo timeout /t 3 /nobreak ^>nul
   echo if exist "%RUNDIR%\stop.flag" exit
   echo goto loop
 ) > "%RUNDIR%\frontend_loop.bat"
@@ -131,18 +132,19 @@ if exist "%RUNDIR%\stop.flag" del "%RUNDIR%\stop.flag" >nul 2>&1
 if defined BACKEND_UP (
   echo [backend]  Deja en cours sur http://localhost:8000
 ) else (
-  echo [backend]  Demarrage de FastAPI  sur http://localhost:8000
-  start "AI Studio - Backend" cmd /c "%RUNDIR%\backend_loop.bat"
+  echo [backend]  Demarrage de FastAPI  sur http://localhost:8000 ^(fenetre cachee^)
+  powershell -NoProfile -Command "Start-Process -FilePath '%RUNDIR%\backend_loop.bat' -WindowStyle Hidden"
 )
 if defined FRONTEND_UP (
   echo [frontend] Deja en cours sur http://localhost:5173
 ) else (
-  echo [frontend] Demarrage de Vite     sur http://localhost:5173
-  start "AI Studio - Frontend" cmd /c "%RUNDIR%\frontend_loop.bat"
+  echo [frontend] Demarrage de Vite     sur http://localhost:5173 ^(fenetre cachee^)
+  powershell -NoProfile -Command "Start-Process -FilePath '%RUNDIR%\frontend_loop.bat' -WindowStyle Hidden"
 )
 echo.
-echo Les serveurs tournent dans deux fenetres et redemarrent seuls en cas de crash.
-echo Ferme ces fenetres pour tout arreter.
+echo Les serveurs tournent en arriere-plan, sans fenetre, et redemarrent seuls en cas de crash.
+echo Pour tout arreter : bouton "Arreter" dans l'interface ^(ou stop.bat^).
+echo Logs de secours : .run\backend.log et .run\frontend.log ^(sinon onglet Console de l'app^).
 echo.
 
 REM ------------------------------------------------------------
