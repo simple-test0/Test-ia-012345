@@ -128,7 +128,7 @@ export default function ConsolePage() {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="relative flex-1 overflow-auto rounded-lg border border-gray-800 bg-black/60 p-3
+        className="relative flex-1 overflow-auto rounded-lg border border-gray-800 bg-gray-950 p-3
           font-mono text-[11px] leading-relaxed"
       >
         {visible.length === 0 && (

@@ -70,22 +70,38 @@ interface MetricPoint {
   val_acc?: number
 }
 
-const CHART_STYLE = {
-  contentStyle: {
-    backgroundColor: '#111827',
-    border: '1px solid #374151',
-    borderRadius: 6,
-    fontSize: 11,
-    padding: '4px 8px',
-  },
-  labelStyle: { color: '#9ca3af' },
-  itemStyle: { color: '#e5e7eb' },
+// Recharts writes SVG attributes, where CSS var() isn't supported — resolve
+// the theme variables to concrete colors at render time instead.
+const cssColor = (name: string) =>
+  `rgb(${getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace(/ +/g, ',')})`
+
+function useChartTheme() {
+  return {
+    grid: cssColor('--gray-800'),
+    axis: cssColor('--gray-700'),
+    tick: cssColor('--gray-500'),
+    train: cssColor('--purple-400'),
+    val: cssColor('--blue-400'),
+    acc: cssColor('--emerald-400'),
+    tooltip: {
+      contentStyle: {
+        backgroundColor: cssColor('--gray-900'),
+        border: `1px solid ${cssColor('--gray-700')}`,
+        borderRadius: 4,
+        fontSize: 11,
+        padding: '4px 8px',
+      },
+      labelStyle: { color: cssColor('--gray-400') },
+      itemStyle: { color: cssColor('--gray-200') },
+    },
+  }
 }
 
 function RunMetrics({ runId }: { runId: string }) {
   const [history, setHistory] = useState<MetricPoint[]>([])
   const [batchLoss, setBatchLoss] = useState<number | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
+  const chart = useChartTheme()
 
   useWebSocket(wsUrl(`/ws/training/${runId}`), {
     onMessage: (raw) => {
@@ -137,31 +153,31 @@ function RunMetrics({ runId }: { runId: string }) {
           {hasLoss && (
             <div>
               <p className="mb-1 text-[10px] text-gray-500">
-                <span className="inline-block w-2 h-0.5 bg-violet-400 mr-1 align-middle" />train loss
+                <span className="inline-block w-2 h-0.5 bg-purple-400 mr-1 align-middle" />train loss
                 {hasLoss && history.some(p => p.val_loss !== undefined) && (
-                  <><span className="inline-block w-2 h-0.5 bg-orange-400 mx-1 align-middle" />val loss</>
+                  <><span className="inline-block w-2 h-0.5 bg-blue-400 mx-1 align-middle" />val loss</>
                 )}
               </p>
               <ResponsiveContainer width="100%" height={120}>
                 <LineChart data={history} margin={{ top: 4, right: 6, bottom: 0, left: -22 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
                   <XAxis
                     dataKey="epoch"
-                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tick={{ fill: chart.tick, fontSize: 10 }}
                     tickLine={false}
-                    axisLine={{ stroke: '#374151' }}
+                    axisLine={{ stroke: chart.axis }}
                   />
                   <YAxis
-                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tick={{ fill: chart.tick, fontSize: 10 }}
                     tickLine={false}
-                    axisLine={{ stroke: '#374151' }}
+                    axisLine={{ stroke: chart.axis }}
                     width={40}
                   />
-                  <Tooltip {...CHART_STYLE} />
+                  <Tooltip {...chart.tooltip} />
                   <Line
                     type="monotone"
                     dataKey="train_loss"
-                    stroke="#a78bfa"
+                    stroke={chart.train}
                     strokeWidth={1.5}
                     dot={false}
                     name="train loss"
@@ -170,7 +186,7 @@ function RunMetrics({ runId }: { runId: string }) {
                   <Line
                     type="monotone"
                     dataKey="val_loss"
-                    stroke="#f97316"
+                    stroke={chart.val}
                     strokeWidth={1.5}
                     dot={false}
                     name="val loss"
@@ -188,25 +204,25 @@ function RunMetrics({ runId }: { runId: string }) {
               </p>
               <ResponsiveContainer width="100%" height={80}>
                 <LineChart data={history} margin={{ top: 4, right: 6, bottom: 0, left: -22 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
                   <XAxis
                     dataKey="epoch"
-                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tick={{ fill: chart.tick, fontSize: 10 }}
                     tickLine={false}
-                    axisLine={{ stroke: '#374151' }}
+                    axisLine={{ stroke: chart.axis }}
                   />
                   <YAxis
                     domain={[0, 1]}
-                    tick={{ fill: '#6b7280', fontSize: 10 }}
+                    tick={{ fill: chart.tick, fontSize: 10 }}
                     tickLine={false}
-                    axisLine={{ stroke: '#374151' }}
+                    axisLine={{ stroke: chart.axis }}
                     width={40}
                   />
-                  <Tooltip {...CHART_STYLE} />
+                  <Tooltip {...chart.tooltip} />
                   <Line
                     type="monotone"
                     dataKey="val_acc"
-                    stroke="#34d399"
+                    stroke={chart.acc}
                     strokeWidth={1.5}
                     dot={false}
                     name="val acc"

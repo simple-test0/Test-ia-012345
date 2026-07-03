@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Bot, FlaskConical, ImageIcon, Power, Terminal } from 'lucide-react'
+import { Bot, FlaskConical, ImageIcon, Moon, Power, Sun, Terminal } from 'lucide-react'
 import { clsx } from 'clsx'
 import { shutdownApp } from '../../api/system'
 
@@ -14,6 +14,18 @@ const links = [
 export default function Sidebar() {
   const [confirming, setConfirming] = useState(false)
   const [stopped, setStopped] = useState(false)
+  const [theme, setTheme] = useState(document.documentElement.dataset.theme ?? 'dark')
+
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    document.documentElement.dataset.theme = next
+    try {
+      localStorage.setItem('theme', next)
+    } catch {
+      // stockage indisponible : le thème vaudra pour cette session seulement
+    }
+    setTheme(next)
+  }
 
   const handleShutdown = async () => {
     setConfirming(false)
@@ -60,7 +72,16 @@ export default function Sidebar() {
         </NavLink>
       ))}
 
-      <div className="mt-auto">
+      <div className="mt-auto flex flex-col items-center gap-2">
+        <button
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Passer au thème atelier (clair)' : 'Passer au thème instrument (sombre)'}
+          className="flex flex-col items-center gap-1 rounded-lg p-2 text-xs text-gray-500
+            transition-colors hover:bg-gray-800 hover:text-gray-200"
+        >
+          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+          <span className="text-[10px]">{theme === 'dark' ? 'Atelier' : 'Studio'}</span>
+        </button>
         <button
           onClick={() => setConfirming(true)}
           title="Arrêter l'application"

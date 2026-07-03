@@ -9,7 +9,12 @@ export default function AppShell() {
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <header className="flex h-12 items-center justify-between border-b border-gray-800 px-4">
-          <span className="text-sm font-semibold text-purple-400 tracking-wide">AI Studio</span>
+          <span className="flex items-center gap-2.5">
+            <span aria-hidden className="h-2.5 w-2.5 bg-purple-500" />
+            <span className="font-mono text-xs font-semibold uppercase tracking-[0.3em] text-gray-200">
+              AI Studio
+            </span>
+          </span>
           <HardwareBadge />
         </header>
         <main className="flex-1 overflow-auto">
