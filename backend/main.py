@@ -9,6 +9,9 @@ from core.config import ensure_dirs, settings
 from core.database import init_db
 
 logging.basicConfig(level=logging.INFO)
+# basicConfig is a no-op when the root logger already has handlers (pytest,
+# embedding apps) — force the level so INFO reaches the Console buffer anyway.
+logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # In-memory log buffer feeding the Console page (REST backlog + WS tail).
@@ -35,6 +38,7 @@ async def _recover_orphaned_jobs() -> None:
     from models.dataset import Dataset
     from models.diffusion_model import DiffusionModel
     from models.image_job import ImageJob
+    from models.tokenizer_model import TokenizerModel
     from models.training_run import TrainingRun
 
     interrupted = "Interrompu par un redémarrage du serveur"
@@ -60,6 +64,14 @@ async def _recover_orphaned_jobs() -> None:
         for ds in result.scalars().all():
             ds.status = "error"
             ds.error_message = interrupted
+            recovered += 1
+
+        result = await db.execute(
+            select(TokenizerModel).where(TokenizerModel.status == "training")
+        )
+        for tok in result.scalars().all():
+            tok.status = "error"
+            tok.error_message = interrupted
             recovered += 1
 
         result = await db.execute(

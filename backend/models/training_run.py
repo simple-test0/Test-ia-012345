@@ -21,6 +21,7 @@ class TrainingRun(Base):
     arch_config: Mapped[dict] = mapped_column(JSON, default=dict)
     training_config: Mapped[dict] = mapped_column(JSON, default=dict)
     dataset_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    tokenizer_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     hardware_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     metrics_history: Mapped[list] = mapped_column(JSON, default=list)
     best_checkpoint_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

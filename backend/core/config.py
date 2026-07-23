@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     images_dir: Path = BASE_DIR / "data" / "images"
     models_dir: Path = BASE_DIR / "data" / "models"
     datasets_dir: Path = BASE_DIR / "data" / "datasets"
+    tokenizers_dir: Path = BASE_DIR / "data" / "tokenizers"
     db_path: Path = BASE_DIR / "data" / "db" / "app.db"
 
     # Database
@@ -63,6 +64,7 @@ def ensure_dirs() -> None:
         settings.models_dir / "ollama",
         settings.models_dir / "trained",
         settings.datasets_dir,
+        settings.tokenizers_dir,
         settings.db_path.parent,
     ]:
         d.mkdir(parents=True, exist_ok=True)

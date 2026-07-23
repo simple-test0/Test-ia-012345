@@ -12,10 +12,13 @@ from core.config import settings
 from core.database import AsyncSessionLocal, get_db
 from hardware.detector import detect_hardware
 from models.dataset import Dataset
+from models.tokenizer_model import TokenizerModel
 from models.training_run import TrainingRun
 from services.labs.architecture_registry import get_arch, list_archs
 from services.labs.exporter import export_model
+from services.labs.tokenizer_manager import ALGORITHMS, DEFAULT_SPECIAL_TOKENS, encode_preview
 from services.labs.trainer import training_manager
+from services.labs.training_options import OPTION_GROUPS, TRAINING_OPTIONS
 
 router = APIRouter(prefix="/labs", tags=["labs"])
 
@@ -30,6 +33,11 @@ def _track_task(task) -> None:
 
 
 # ── Architectures ─────────────────────────────────────────────────────────────
+
+@router.get("/training-options")
+async def get_training_options():
+    return {"options": TRAINING_OPTIONS, "groups": OPTION_GROUPS}
+
 
 @router.get("/architectures")
 async def get_architectures(vram_mb: int = 0, task_type: str = ""):
@@ -152,6 +160,143 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     return {"deleted": dataset_id}
 
 
+# ── Tokenizers ────────────────────────────────────────────────────────────────
+
+@router.get("/tokenizers/algorithms")
+async def get_tokenizer_algorithms():
+    return {
+        "algorithms": [{"id": k, **v} for k, v in ALGORITHMS.items()],
+        "default_special_tokens": DEFAULT_SPECIAL_TOKENS,
+    }
+
+
+@router.get("/tokenizers")
+async def list_tokenizers(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(TokenizerModel).order_by(TokenizerModel.created_at.desc())
+    )
+    return [_tokenizer_dict(t) for t in result.scalars().all()]
+
+
+@router.get("/tokenizers/{tokenizer_id}")
+async def get_tokenizer(tokenizer_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(TokenizerModel).where(TokenizerModel.id == tokenizer_id)
+    )
+    tok = result.scalar_one_or_none()
+    if tok is None:
+        raise HTTPException(status_code=404, detail="Tokenizer not found")
+    return _tokenizer_dict(tok)
+
+
+class TrainTokenizerRequest(BaseModel):
+    name: str
+    dataset_id: str
+    algorithm: str = "bpe"
+    vocab_size: int = 8192
+    min_frequency: int = 2
+    lowercase: bool = False
+    byte_level: bool = True
+    special_tokens: Optional[List[str]] = None
+
+
+@router.post("/tokenizers")
+async def train_tokenizer_route(req: TrainTokenizerRequest, db: AsyncSession = Depends(get_db)):
+    import asyncio
+
+    from services.labs.tokenizer_manager import train_tokenizer
+
+    if req.algorithm not in ALGORITHMS:
+        raise HTTPException(status_code=422, detail=f"Algorithme inconnu: {req.algorithm}")
+    if not (16 <= req.vocab_size <= 200_000):
+        raise HTTPException(status_code=422, detail="vocab_size doit être entre 16 et 200000")
+
+    result = await db.execute(select(Dataset).where(Dataset.id == req.dataset_id))
+    ds = result.scalar_one_or_none()
+    if ds is None or ds.status != "ready" or not ds.local_path:
+        raise HTTPException(status_code=400, detail="Dataset introuvable ou pas prêt")
+
+    tok_id = str(uuid.uuid4())
+    record = TokenizerModel(
+        id=tok_id,
+        name=req.name,
+        algorithm=req.algorithm,
+        vocab_size=req.vocab_size,
+        min_frequency=req.min_frequency,
+        lowercase=req.lowercase,
+        byte_level=req.byte_level,
+        special_tokens=req.special_tokens or DEFAULT_SPECIAL_TOKENS,
+        dataset_id=req.dataset_id,
+        status="training",
+    )
+    db.add(record)
+    await db.commit()
+
+    _track_task(
+        asyncio.create_task(
+            train_tokenizer(
+                tok_id,
+                req.algorithm,
+                req.vocab_size,
+                req.min_frequency,
+                req.special_tokens,
+                req.lowercase,
+                req.byte_level,
+                ds.local_path,
+                AsyncSessionLocal,
+            )
+        )
+    )
+    return {"id": tok_id, "status": "training"}
+
+
+class EncodeRequest(BaseModel):
+    text: str
+
+
+@router.post("/tokenizers/{tokenizer_id}/encode")
+async def encode_with_tokenizer(
+    tokenizer_id: str, req: EncodeRequest, db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(TokenizerModel).where(TokenizerModel.id == tokenizer_id)
+    )
+    tok = result.scalar_one_or_none()
+    if tok is None:
+        raise HTTPException(status_code=404, detail="Tokenizer not found")
+    if tok.status != "ready" or not tok.local_path:
+        raise HTTPException(status_code=400, detail="Tokenizer pas encore prêt")
+    if len(req.text) > 10_000:
+        raise HTTPException(status_code=422, detail="Texte trop long pour la prévisualisation")
+    import asyncio
+
+    return await asyncio.get_event_loop().run_in_executor(
+        None, encode_preview, tok.local_path, req.text
+    )
+
+
+@router.delete("/tokenizers/{tokenizer_id}")
+async def delete_tokenizer(tokenizer_id: str, db: AsyncSession = Depends(get_db)):
+    import shutil
+    from pathlib import Path
+
+    result = await db.execute(
+        select(TokenizerModel).where(TokenizerModel.id == tokenizer_id)
+    )
+    tok = result.scalar_one_or_none()
+    if tok is None:
+        raise HTTPException(status_code=404, detail="Tokenizer not found")
+
+    if tok.local_path:
+        path = Path(tok.local_path).resolve().parent
+        if path.is_relative_to(settings.tokenizers_dir.resolve()):
+            shutil.rmtree(path, ignore_errors=True)
+
+    await db.delete(tok)
+    await db.commit()
+    return {"deleted": tokenizer_id}
+
+
 # ── Training Runs ─────────────────────────────────────────────────────────────
 
 class CreateRunRequest(BaseModel):
@@ -160,6 +305,7 @@ class CreateRunRequest(BaseModel):
     arch_config: Dict[str, Any]
     training_config: Dict[str, Any]
     dataset_id: Optional[str] = None
+    tokenizer_id: Optional[str] = None
 
 
 @router.get("/runs")
@@ -197,14 +343,29 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
         if ds and ds.local_path:
             dataset_path = ds.local_path
 
+    tokenizer_path = None
+    arch_config = dict(req.arch_config)
+    if req.tokenizer_id:
+        result = await db.execute(
+            select(TokenizerModel).where(TokenizerModel.id == req.tokenizer_id)
+        )
+        tok = result.scalar_one_or_none()
+        if tok is None or tok.status != "ready" or not tok.local_path:
+            raise HTTPException(status_code=400, detail="Tokenizer introuvable ou pas prêt")
+        tokenizer_path = tok.local_path
+        # The embedding table must match the tokenizer's real vocabulary.
+        if tok.actual_vocab_size and "vocab_size" in arch_config:
+            arch_config["vocab_size"] = tok.actual_vocab_size
+
     run = TrainingRun(
         id=run_id,
         name=req.name,
         status="pending",
         architecture=req.architecture,
-        arch_config=req.arch_config,
+        arch_config=arch_config,
         training_config=req.training_config,
         dataset_id=req.dataset_id,
+        tokenizer_id=req.tokenizer_id,
         total_epochs=epochs,
         hardware_snapshot={
             "vram_mb": hw.gpus[0].vram_total_mb if hw.gpus else 0,
@@ -219,10 +380,11 @@ async def create_run(req: CreateRunRequest, db: AsyncSession = Depends(get_db)):
     q = training_manager.start(
         run_id=run_id,
         arch_id=req.architecture,
-        arch_config=req.arch_config,
+        arch_config=arch_config,
         training_config=req.training_config,
         dataset_path=dataset_path,
         checkpoint_dir=checkpoint_dir,
+        tokenizer_path=tokenizer_path,
     )
 
     # Background task to drain subprocess queue → WS
@@ -347,6 +509,29 @@ async def stop_run(run_id: str, db: AsyncSession = Depends(get_db)):
     return {"stopped": run_id}
 
 
+@router.delete("/runs/{run_id}")
+async def delete_run(run_id: str, db: AsyncSession = Depends(get_db)):
+    import asyncio
+    import shutil
+
+    result = await db.execute(select(TrainingRun).where(TrainingRun.id == run_id))
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status in ("pending", "running", "paused"):
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: training_manager.stop(run_id)
+        )
+
+    run_dir = (settings.models_dir / "trained" / run_id).resolve()
+    if run_dir.is_relative_to((settings.models_dir / "trained").resolve()):
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+    await db.delete(run)
+    await db.commit()
+    return {"deleted": run_id}
+
+
 class ExportRequest(BaseModel):
     format: str = "onnx"
 
@@ -386,6 +571,25 @@ async def download_export(run_id: str):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _tokenizer_dict(t: TokenizerModel) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "algorithm": t.algorithm,
+        "vocab_size": t.vocab_size,
+        "actual_vocab_size": t.actual_vocab_size,
+        "min_frequency": t.min_frequency,
+        "lowercase": t.lowercase,
+        "byte_level": t.byte_level,
+        "special_tokens": t.special_tokens,
+        "dataset_id": t.dataset_id,
+        "stats": t.stats,
+        "status": t.status,
+        "error_message": t.error_message,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+    }
+
+
 def _dataset_dict(d: Dataset) -> dict:
     return {
         "id": d.id,
@@ -413,6 +617,7 @@ def _run_dict(r: TrainingRun) -> dict:
         "arch_config": r.arch_config,
         "training_config": r.training_config,
         "dataset_id": r.dataset_id,
+        "tokenizer_id": r.tokenizer_id,
         "hardware_snapshot": r.hardware_snapshot,
         "metrics_history": r.metrics_history,
         "best_checkpoint_path": r.best_checkpoint_path,

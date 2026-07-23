@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Studio — Labs</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧪</text></svg>" />
+</head>
+<body>
+<div id="app">
+  <nav>
+    <div class="brand">🧪 Labs<small>Entraînement de réseaux</small></div>
+    <a href="#/runs" data-view="runs">📈 Entraînements</a>
+    <a href="#/new" data-view="new">▶ Nouveau run</a>
+    <a href="#/datasets" data-view="datasets">🗂 Datasets</a>
+    <a href="#/tokenizers" data-view="tokenizers">🔤 Tokenizers</a>
+    <a href="#/archs" data-view="archs">🧠 Architectures</a>
+    <a href="#/hardware" data-view="hardware">🖥 Matériel</a>
+    <a href="#/console" data-view="console">≡ Console</a>
+    <div class="spacer"></div>
+    <button class="ghost small" id="btn-shutdown" title="Arrêter le serveur Labs">⏻ Arrêter</button>
+    <div class="foot">App autonome · port 8100<br/>DB : data/db/labs.db</div>
+  </nav>
+
+  <main>
+    <section class="view" id="view-runs">
+      <h1>Entraînements</h1>
+      <p class="subtitle">Runs en cours et historique — métriques en direct via WebSocket.</p>
+      <div id="runs-list"></div>
+    </section>
+
+    <section class="view" id="view-new">
+      <h1>Nouveau run</h1>
+      <p class="subtitle">Configurez l'architecture, les données, la tokenisation et toutes les options d'entraînement.</p>
+      <div class="card">
+        <label>Nom du run</label>
+        <input type="text" id="run-name" placeholder="mon-experience-01" />
+        <h2>Architecture</h2>
+        <div class="opt-cards" id="arch-cards"></div>
+        <div id="arch-params"></div>
+        <h2>Données</h2>
+        <div class="grid2">
+          <div>
+            <label>Dataset <span class="help">— vide = données aléatoires (démo)</span></label>
+            <select id="run-dataset"></select>
+          </div>
+          <div id="run-tokenizer-wrap">
+            <label>Tokenizer <span class="help">— pour les architectures texte (NLP)</span></label>
+            <select id="run-tokenizer"></select>
+          </div>
+        </div>
+        <h2>Options d'entraînement</h2>
+        <div id="training-options"></div>
+        <div style="margin-top:18px">
+          <button id="btn-create-run">▶ Lancer l'entraînement</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-datasets">
+      <h1>Datasets</h1>
+      <p class="subtitle">Téléchargez depuis Hugging Face ou importez vos propres fichiers (.txt, .csv, .jsonl…).</p>
+      <div class="grid2">
+        <div class="card">
+          <h2 style="margin-top:0">Hugging Face</h2>
+          <label>Nom local</label>
+          <input type="text" id="ds-name" placeholder="imdb-fr" />
+          <label>Identifiant HF</label>
+          <input type="text" id="ds-hfid" placeholder="ex. imdb, mnist, ag_news" />
+          <label>Type de tâche</label>
+          <select id="ds-task">
+            <option value="classification">classification</option>
+            <option value="nlp">nlp</option>
+            <option value="detection">detection</option>
+            <option value="generation">generation</option>
+          </select>
+          <div style="margin-top:12px"><button id="btn-ds-hf">⬇ Télécharger</button></div>
+        </div>
+        <div class="card">
+          <h2 style="margin-top:0">Import de fichiers</h2>
+          <label>Nom local</label>
+          <input type="text" id="up-name" placeholder="mon-corpus" />
+          <label>Type de tâche</label>
+          <select id="up-task">
+            <option value="nlp">nlp</option>
+            <option value="classification">classification</option>
+          </select>
+          <label>Fichiers</label>
+          <input type="file" id="up-files" multiple />
+          <div style="margin-top:12px"><button id="btn-ds-upload">⬆ Importer</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0">Datasets disponibles</h2>
+        <div id="datasets-list"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-tokenizers">
+      <h1>Tokenizers</h1>
+      <p class="subtitle">Entraînez un tokenizer sur vos données (bibliothèque Rust de Hugging Face — BPE, WordPiece, Unigram…).</p>
+      <div class="card">
+        <h2 style="margin-top:0">Nouveau tokenizer</h2>
+        <div class="grid2">
+          <div>
+            <label>Nom</label>
+            <input type="text" id="tok-name" placeholder="mon-tokenizer-8k" />
+          </div>
+          <div>
+            <label>Dataset source (texte)</label>
+            <select id="tok-dataset"></select>
+          </div>
+        </div>
+        <label>Algorithme</label>
+        <div class="opt-cards" id="tok-algo-cards"></div>
+        <div class="grid3">
+          <div>
+            <label>Taille du vocabulaire <span class="help">— multiple de 128 conseillé</span></label>
+            <input type="number" id="tok-vocab" value="8192" min="16" max="200000" step="128" />
+          </div>
+          <div>
+            <label>Fréquence minimale</label>
+            <input type="number" id="tok-minfreq" value="2" min="1" max="1000" />
+          </div>
+          <div>
+            <label>Tokens spéciaux <span class="help">— séparés par des virgules</span></label>
+            <input type="text" id="tok-special" value="[PAD], [UNK], [CLS], [SEP], [MASK]" />
+          </div>
+        </div>
+        <div class="check-row"><input type="checkbox" id="tok-lower" /><label for="tok-lower">Minuscules (lowercase)</label></div>
+        <div class="check-row"><input type="checkbox" id="tok-byte" checked /><label for="tok-byte">Byte-level (BPE) — aucun mot inconnu possible</label></div>
+        <div style="margin-top:14px"><button id="btn-tok-train">🔤 Entraîner le tokenizer</button></div>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0">Tokenizers entraînés</h2>
+        <div id="tokenizers-list"></div>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0">Terrain d'essai</h2>
+        <div class="grid2">
+          <div>
+            <label>Tokenizer</label>
+            <select id="play-tokenizer"></select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <div class="stats-row" style="margin-top:0" id="play-stats"></div>
+          </div>
+        </div>
+        <label>Texte à encoder</label>
+        <textarea id="play-text" rows="3" placeholder="Tapez un texte pour voir les tokens…"></textarea>
+        <div class="token-chips" id="play-tokens"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-archs">
+      <h1>Architectures</h1>
+      <p class="subtitle">Catalogue des réseaux de neurones disponibles pour l'entraînement.</p>
+      <div id="archs-list"></div>
+    </section>
+
+    <section class="view" id="view-hardware">
+      <h1>Matériel</h1>
+      <p class="subtitle">GPU, RAM, CPU et recommandations d'entraînement pour cette machine.</p>
+      <div id="hardware-info"></div>
+    </section>
+
+    <section class="view" id="view-console">
+      <h1>Console</h1>
+      <p class="subtitle">Logs du serveur Labs en direct.</p>
+      <div id="console-log"></div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
