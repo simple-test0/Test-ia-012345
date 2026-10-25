@@ -34,7 +34,7 @@ class GarminActivityTest {
     @Test
     fun exportedFileIsReturned() {
         val a = Robolectric.buildActivity(GarminActivity::class.java).setup().get()
-        a.pageUrl = "https://connect.garmin.com/modern/activity/123"
+        a.pageUrl = "https://connect.garmin.com/app/activity/123"
         a.bridge.pendingName = "activity_123"
         a.bridge.onData(Base64.encodeToString(gpx, Base64.DEFAULT), "application/gpx+xml")
         org.robolectric.shadows.ShadowLooper.idleMainLooper()

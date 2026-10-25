@@ -262,7 +262,7 @@ class GarminActivity : Activity() {
     }
 
     companion object {
-        const val START_URL = "https://connect.garmin.com/modern/activities"
+        const val START_URL = "https://connect.garmin.com/app/activities"
         const val EXTRA_NAME = "name"
         private const val MAX_BYTES = 64 * 1024 * 1024
         private const val DESKTOP_UA =
