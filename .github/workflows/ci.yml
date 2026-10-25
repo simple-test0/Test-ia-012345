@@ -22,7 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install fastapi "uvicorn[standard]" python-multipart \
-            sqlalchemy aiosqlite pydantic pydantic-settings \
+            "sqlalchemy[asyncio]" aiosqlite pydantic pydantic-settings \
             huggingface-hub psutil ddgs httpx
           pip install -r requirements-dev.txt
           pip install ruff
