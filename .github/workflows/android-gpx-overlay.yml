@@ -10,6 +10,9 @@ on:
       - "gpx-overlay-android/**"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -39,3 +42,16 @@ jobs:
         with:
           name: TraceO-apk
           path: gpx-overlay-android/TraceO.apk
+
+      # Lien de téléchargement direct (sans compte ni zip) :
+      # https://github.com/<dépôt>/releases/download/traceo-latest/TraceO.apk
+      - name: Publier l'APK (release « traceo-latest »)
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: traceo-latest
+          name: Trace O — dernière version
+          prerelease: true
+          overwrite_files: true
+          files: gpx-overlay-android/TraceO.apk
+          body: APK Android de Trace O, compilé automatiquement à chaque modification.
