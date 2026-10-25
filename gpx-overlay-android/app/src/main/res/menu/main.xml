@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/home" android:title="@string/home" />
+    <item android:id="@+id/garmin" android:title="@string/import_garmin" />
     <item android:id="@+id/splits" android:title="@string/splits" />
     <item android:id="@+id/map_scale" android:title="@string/map_scale" />
     <item android:id="@+id/pdf_page" android:title="@string/pdf_page" />

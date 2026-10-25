@@ -694,6 +694,67 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         return out
     }
 
+    /** Petite image de la session (carte + circuit + trace) pour la liste des sessions. */
+    fun renderThumbnail(maxSide: Int): Bitmap? {
+        val map = mapBitmap
+        val t = track
+        if (map == null && (t == null || t.isEmpty)) return null
+        val toThumb = Matrix()
+        val w: Int; val h: Int
+        if (map != null) {
+            // Cadrage sur la trace (et les postes), sans sortir de la carte.
+            var x0 = 0f; var y0 = 0f; var x1 = map.width.toFloat(); var y1 = map.height.toFloat()
+            val pts = ArrayList<Float>()
+            if (t != null && !t.isEmpty) {
+                val p = FloatArray(4)
+                traceMatrix.mapPoints(p, floatArrayOf(t.minX, t.minY, t.maxX, t.maxY))
+                pts.addAll(listOf(p[0], p[1], p[2], p[3]))
+                // Coins opposés aussi (la trace peut être tournée).
+                traceMatrix.mapPoints(p, floatArrayOf(t.minX, t.maxY, t.maxX, t.minY))
+                pts.addAll(listOf(p[0], p[1], p[2], p[3]))
+            }
+            controls.forEach { pts.add(it[0]); pts.add(it[1]) }
+            if (pts.isNotEmpty()) {
+                var a0 = Float.MAX_VALUE; var b0 = Float.MAX_VALUE; var a1 = -Float.MAX_VALUE; var b1 = -Float.MAX_VALUE
+                for (k in pts.indices step 2) {
+                    a0 = min(a0, pts[k]); a1 = max(a1, pts[k]); b0 = min(b0, pts[k + 1]); b1 = max(b1, pts[k + 1])
+                }
+                var cw = (a1 - a0) * 1.2f; var ch = (b1 - b0) * 1.2f
+                // Pas trop étroit : au moins 60 % de la plus grande dimension.
+                cw = max(cw, ch * 0.6f); ch = max(ch, cw * 0.5f)
+                cw = cw.coerceAtMost(map.width.toFloat()); ch = ch.coerceAtMost(map.height.toFloat())
+                val cx = ((a0 + a1) / 2).coerceIn(cw / 2, map.width - cw / 2)
+                val cy = ((b0 + b1) / 2).coerceIn(ch / 2, map.height - ch / 2)
+                x0 = cx - cw / 2; x1 = cx + cw / 2; y0 = cy - ch / 2; y1 = cy + ch / 2
+            }
+            val s = maxSide.toFloat() / max(x1 - x0, y1 - y0)
+            w = max(1, ((x1 - x0) * s).toInt()); h = max(1, ((y1 - y0) * s).toInt())
+            toThumb.setTranslate(-x0, -y0)
+            toThumb.postScale(s, s)
+        } else {
+            // Trace seule : cadrée dans un carré.
+            w = maxSide; h = maxSide
+            val p = FloatArray(4)
+            traceMatrix.mapPoints(p, floatArrayOf(t!!.minX, t.minY, t.maxX, t.maxY))
+            val bw = max(kotlin.math.abs(p[2] - p[0]), 1f); val bh = max(kotlin.math.abs(p[3] - p[1]), 1f)
+            val s = 0.85f * maxSide / max(bw, bh)
+            toThumb.setTranslate(-(p[0] + p[2]) / 2, -(p[1] + p[3]) / 2)
+            toThumb.postScale(s, s)
+            toThumb.postTranslate(maxSide / 2f, maxSide / 2f)
+        }
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        c.drawColor(if (map == null) Color.WHITE else MAP_BG)
+        if (map != null) c.drawBitmap(map, toThumb, bitmapPaint)
+        val sc = FloatArray(9).also { toThumb.getValues(it) }[Matrix.MSCALE_X]
+        drawCourse(c, toThumb, controlRadiusMap() * sc, max(1f, controlRadiusMap() * sc * 0.12f))
+        if (t != null && !t.isEmpty) {
+            val m = Matrix(traceMatrix).apply { postConcat(toThumb) }
+            drawTrack(c, t, m, max(2f, maxSide / 120f), FloatArray(t.local.size))
+        }
+        return out
+    }
+
     // ---------- Calage par points ----------
 
     fun undoCalibration() {

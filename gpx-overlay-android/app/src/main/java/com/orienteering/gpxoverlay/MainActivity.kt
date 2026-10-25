@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
@@ -22,6 +23,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ProgressBar
@@ -29,6 +31,10 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import java.io.File
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -39,6 +45,27 @@ class MainActivity : Activity(), OverlayView.Listener {
     private lateinit var topBar: View
     private lateinit var subtitle: TextView
     private lateinit var emptyState: View
+    private lateinit var home: View
+    private val sessions by lazy { SessionStore(File(filesDir, "sessions")) }
+    /** Session en cours (mise à jour automatiquement), ou null sur l'accueil. */
+    private var currentSessionId: String? = null
+    /** Fichiers encore en cours de chargement pendant une reprise de session (pas d'enregistrement avant). */
+    private var restoringLoads = 0
+
+    private var restoreFailed = false
+
+    /** [ok] = faux si le fichier n'a pas pu être lu : la session enregistrée n'est alors pas écrasée. */
+    private fun loadDone(ok: Boolean = true) {
+        if (!ok && restoringLoads > 0) restoreFailed = true
+        if (restoringLoads > 0 && --restoringLoads == 0) {
+            if (restoreFailed) {
+                // On se détache de la session pour ne pas perdre le fichier manquant.
+                currentSessionId = null
+                showSnack("Un fichier de la session est introuvable (déplacé ou supprimé ?)", null, null)
+            } else saveCurrentSession()
+            restoreFailed = false
+        }
+    }
     private lateinit var bottomPanel: View
     private lateinit var statsRow: View
     private lateinit var statDist: TextView
@@ -115,6 +142,7 @@ class MainActivity : Activity(), OverlayView.Listener {
         topBar = findViewById(R.id.topBar)
         subtitle = findViewById(R.id.subtitle)
         emptyState = findViewById(R.id.emptyState)
+        home = findViewById(R.id.home)
         bottomPanel = findViewById(R.id.bottomPanel)
         statsRow = findViewById(R.id.statsRow)
         statDist = findViewById(R.id.statDist)
@@ -162,6 +190,7 @@ class MainActivity : Activity(), OverlayView.Listener {
         findViewById<View>(R.id.btnOpenTrack).setOnClickListener(openTrack)
         findViewById<View>(R.id.btnEmptyMap).setOnClickListener(openMap)
         findViewById<View>(R.id.btnEmptyTrack).setOnClickListener(openTrack)
+        findViewById<View>(R.id.btnEmptyGarmin).setOnClickListener { openGarmin() }
         findViewById<View>(R.id.btnMore).setOnClickListener { showMoreMenu(it) }
         btnFit.setOnClickListener { overlay.fitView(animate = true) }
         findViewById<View>(R.id.btnSplitsClose).setOnClickListener { hideSplits() }
@@ -236,8 +265,9 @@ class MainActivity : Activity(), OverlayView.Listener {
         scaleDenominator = prefs.getInt("scaleDen", 10000)
         imageDpi = prefs.getInt("dpi", 300)
 
-        restoreSession()
+        migrateLegacySession()
         handleIncoming(intent)
+        buildHome()
         refreshUi()
     }
 
@@ -271,6 +301,8 @@ class MainActivity : Activity(), OverlayView.Listener {
     /** Action d'un élément du menu « ⋮ ». */
     fun onMenuItem(item: MenuItem): Boolean {
         when (item.itemId) {
+            R.id.home -> goHome()
+            R.id.garmin -> openGarmin()
             R.id.splits -> showSplits()
             R.id.map_scale -> showScaleDialog()
             R.id.pdf_page -> mapUri?.let { choosePdfPage(it, mapPageCount) }
@@ -339,6 +371,23 @@ class MainActivity : Activity(), OverlayView.Listener {
             REQ_MAP -> { keepPermission(uri); pendingMapName = displayName(uri); openMap(uri, page = -1, refitTrace = true) }
             REQ_GPX -> { keepPermission(uri); pendingTrackName = displayName(uri); openGpx(uri, savedMatrix = null) }
             REQ_EXPORT -> exportTo(uri)
+            REQ_GARMIN -> openImported(uri, data.getStringExtra(GarminActivity.EXTRA_NAME))
+        }
+    }
+
+    private fun openGarmin() {
+        startActivityForResult(Intent(this, GarminActivity::class.java), REQ_GARMIN)
+    }
+
+    /** Fichier déjà copié dans l'app (Garmin) : carte ou trace selon son contenu. */
+    private fun openImported(uri: Uri, name: String?) {
+        val file = File(uri.path ?: return)
+        val head = ByteArray(16)
+        val n = try { file.inputStream().use { it.read(head) } } catch (_: Exception) { -1 }
+        if (n >= 4 && looksLikeMap(head)) {
+            pendingMapName = name; openMap(uri, page = -1, refitTrace = true)
+        } else {
+            pendingTrackName = name; openGpx(uri, savedMatrix = null)
         }
     }
 
@@ -418,8 +467,9 @@ class MainActivity : Activity(), OverlayView.Listener {
     private fun importFile(uri: Uri): Pair<File, Boolean> {
         val dir = File(filesDir, "imports").apply { mkdirs() }
         // On garde seulement les fichiers récents ou utilisés par la session.
-        val keep = setOfNotNull(mapUri?.path, gpxUri?.path)
-        dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(6)?.forEach {
+        val keep = (setOfNotNull(mapUri?.toString(), gpxUri?.toString()) + sessions.referencedUris())
+            .mapNotNull { Uri.parse(it).path }.toSet()
+        dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(10)?.forEach {
             if (it.path !in keep) it.delete()
         }
         var name = "fichier"
@@ -486,9 +536,14 @@ class MainActivity : Activity(), OverlayView.Listener {
                     if (refitTrace && overlay.track != null && savedMatrix == null) {
                         toast("Trace placée au centre. Calez-la avec « Ajuster » ou « Caler ».")
                     }
+                    loadDone()
                 }
             } catch (e: Throwable) {
-                runOnUiThread { busy(false); toast("Carte illisible : ${e.message ?: e.javaClass.simpleName}") }
+                runOnUiThread {
+                    busy(false)
+                    toast("Carte illisible : ${e.message ?: e.javaClass.simpleName}")
+                    loadDone(ok = false)
+                }
             }
         }
     }
@@ -524,9 +579,10 @@ class MainActivity : Activity(), OverlayView.Listener {
                     else if (overlay.mapBitmap != null && mapIsPdf) applyKnownScale(quiet = true)
                     refreshUi()
                     saveSession()
+                    loadDone()
                 }
             } catch (e: Throwable) {
-                runOnUiThread { busy(false); toast(e.message ?: "Trace illisible") }
+                runOnUiThread { busy(false); toast(e.message ?: "Trace illisible"); loadDone(ok = false) }
             }
         }
     }
@@ -930,6 +986,7 @@ class MainActivity : Activity(), OverlayView.Listener {
     // ---------- Sauvegarde de la session ----------
 
     private fun saveSession() {
+        saveCurrentSession()
         val v = FloatArray(9).also { overlay.traceMatrix.getValues(it) }
         prefs.edit()
             .putString("mapUri", mapUri?.toString())
@@ -951,22 +1008,240 @@ class MainActivity : Activity(), OverlayView.Listener {
             .apply()
     }
 
-    private fun restoreSession() {
+    // ---------- Sessions ----------
+
+    /** Enregistre la session en cours (carte, trace, calage, postes) avec une miniature. */
+    private fun saveCurrentSession() {
+        if (restoringLoads > 0) return
+        val map = mapUri?.toString()
+        val track = gpxUri?.toString()
+        if (map == null && track == null) return
+        val cur = currentSessionId?.let { sessions.get(it) }
+        // Même session tant qu'on complète ou ajuste ; nouvelle si on change de carte ou de trace.
+        val same = cur != null && (cur.mapUri == null || cur.mapUri == map) && (cur.trackUri == null || cur.trackUri == track)
+        val id = if (same) cur!!.id else sessions.findByFiles(map, track)?.id ?: SessionStore.newId()
+        val name = if (same) cur!!.name else sessions.get(id)?.name
+        val t = overlay.track
+        val m = FloatArray(9).also { overlay.traceMatrix.getValues(it) }
+        sessions.upsert(
+            Session(
+                id = id, name = name, savedAt = System.currentTimeMillis(),
+                mapUri = map, mapPage = mapPage, mapName = mapName,
+                trackUri = track, trackName = trackName,
+                matrix = if (t != null) m else null,
+                controls = overlay.controls.map { it.copyOf() },
+                scaleDen = scaleDenominator, dpi = imageDpi,
+                distanceM = t?.distanceM, durationMs = t?.durationMs,
+            )
+        )
+        currentSessionId = id
+        overlay.renderThumbnail(480)?.let { thumb ->
+            val f = sessions.thumbFile(id)
+            io.execute {
+                try { f.outputStream().use { thumb.compress(Bitmap.CompressFormat.PNG, 90, it) } } catch (_: Exception) { }
+                thumb.recycle()
+            }
+        }
+    }
+
+    /** Rouvre une session enregistrée. */
+    private fun restore(s: Session) {
+        overlay.mode = OverlayView.Mode.MAP
+        hideSplits()
+        currentSessionId = s.id
+        scaleDenominator = s.scaleDen
+        imageDpi = s.dpi
+        pendingControls = s.controls
+        pendingControlsMap = s.mapUri
+        pendingMapName = s.mapName
+        pendingTrackName = s.trackName
+        restoringLoads = listOfNotNull(s.trackUri, s.mapUri).size
+        // Les chargements passent par le même fil, dans l'ordre : trace puis carte.
+        s.trackUri?.let { openGpx(Uri.parse(it), s.matrix) }
+        s.mapUri?.let { openMap(Uri.parse(it), s.mapPage, refitTrace = false, savedMatrix = s.matrix) }
+    }
+
+    /** Retour à l'accueil : la session est enregistrée puis fermée. */
+    private fun goHome() {
+        saveCurrentSession()
+        overlay.mode = OverlayView.Mode.MAP
+        hideSplits()
+        overlay.setControls(emptyList())
+        overlay.setTrack(null, refit = false)
+        overlay.setMap(null, refitTrace = false)
+        profile.track = null
+        mapUri = null; gpxUri = null; mapName = null; trackName = null
+        mapIsPdf = false; mapPxPerMm = null; overlay.mapPxPerMm = null
+        currentSessionId = null
+        buildHome()
+        refreshUi()
+    }
+
+    /** Reprend la session de la version précédente (avant l'arrivée des sessions). */
+    private fun migrateLegacySession() {
+        if (sessions.list().isNotEmpty()) return
+        val map = prefs.getString("mapUri", null)
+        val track = prefs.getString("gpxUri", null)
+        if (map == null && track == null) return
         val matrix = prefs.getString("traceMatrix", null)?.split(",")?.mapNotNull { it.toFloatOrNull() }
             ?.takeIf { it.size == 9 }?.toFloatArray()
-        val gpx = prefs.getString("gpxUri", null)?.let(Uri::parse)
-        val map = prefs.getString("mapUri", null)?.let(Uri::parse)
-        val page = prefs.getInt("mapPage", 0)
-        pendingControls = prefs.getString("controls", null)?.split(";")?.mapNotNull { s ->
-            val xy = s.split(",").mapNotNull { it.toFloatOrNull() }
+        val controls = prefs.getString("controls", null)?.split(";")?.mapNotNull { str ->
+            val xy = str.split(",").mapNotNull { it.toFloatOrNull() }
             if (xy.size == 2) floatArrayOf(xy[0], xy[1]) else null
+        } ?: emptyList()
+        sessions.upsert(
+            Session(
+                SessionStore.newId(), null, System.currentTimeMillis(), map, prefs.getInt("mapPage", 0),
+                prefs.getString("mapName", null), track, prefs.getString("trackName", null), matrix,
+                if (prefs.getString("controlsMap", null) == map) controls else emptyList(),
+                scaleDenominator, imageDpi, null, null,
+            )
+        )
+        prefs.edit().remove("mapUri").remove("gpxUri").apply()
+    }
+
+    private fun buildHome() {
+        val list = sessions.list()
+        val last = list.firstOrNull()
+        val dp = resources.displayMetrics.density
+        // Avec des sessions, l'accueil se resserre pour que « Reprendre » soit visible sans défiler.
+        val compact = last != null
+        findViewById<View>(R.id.welcomeText).visibility = if (compact) View.GONE else View.VISIBLE
+        findViewById<View>(R.id.welcomeTip).visibility = if (compact) View.GONE else View.VISIBLE
+        findViewById<View>(R.id.welcomeLogo).visibility = if (compact) View.GONE else View.VISIBLE
+        (home as ScrollView).scrollTo(0, 0)
+        findViewById<View>(R.id.resumeHeader).visibility = if (last != null) View.VISIBLE else View.GONE
+        val lastCard = findViewById<View>(R.id.lastSession)
+        lastCard.visibility = if (last != null) View.VISIBLE else View.GONE
+        if (last != null) {
+            val thumb = findViewById<ImageView>(R.id.lastThumb)
+            val bmp = sessions.thumbFile(last.id).takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) }
+            thumb.visibility = if (bmp != null) View.VISIBLE else View.GONE
+            thumb.setImageBitmap(bmp)
+            thumb.clipToOutline = true
+            thumb.outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) {
+                    o.setRoundRect(0, 0, v.width, v.height + (18 * dp).toInt(), 18 * dp)
+                }
+            }
+            findViewById<TextView>(R.id.lastTitle).text = last.title
+            findViewById<TextView>(R.id.lastSubtitle).text = sessionDetails(last)
+            lastCard.setOnClickListener { restore(last) }
+            findViewById<View>(R.id.btnResume).setOnClickListener { restore(last) }
+            findViewById<View>(R.id.btnLastMore).setOnClickListener { showSessionMenu(it, last) }
         }
-        pendingControlsMap = prefs.getString("controlsMap", null)
-        pendingMapName = prefs.getString("mapName", null)
-        pendingTrackName = prefs.getString("trackName", null)
-        // Les chargements passent par le même fil, dans l'ordre : trace puis carte.
-        if (gpx != null) openGpx(gpx, matrix)
-        if (map != null) openMap(map, page, refitTrace = false, savedMatrix = matrix)
+        val others = list.drop(1).take(15)
+        findViewById<View>(R.id.previousHeader).visibility = if (others.isNotEmpty()) View.VISIBLE else View.GONE
+        val box = findViewById<LinearLayout>(R.id.sessionList)
+        box.visibility = if (others.isNotEmpty()) View.VISIBLE else View.GONE
+        box.removeAllViews()
+        others.forEachIndexed { i, s ->
+            if (i > 0) box.addView(View(this).apply {
+                setBackgroundColor(getColor(R.color.line))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+                    marginStart = (84 * dp).toInt()
+                }
+            })
+            box.addView(sessionRow(s))
+        }
+    }
+
+    private fun sessionRow(s: Session): View {
+        val dp = resources.displayMetrics.density
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt())
+            background = getDrawable(android.R.drawable.list_selector_background)
+            isClickable = true
+            setOnClickListener { restore(s) }
+            setOnLongClickListener { showSessionMenu(it, s); true }
+        }
+        val thumb = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams((60 * dp).toInt(), (60 * dp).toInt())
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = GradientDrawable().apply { cornerRadius = 10 * dp; setColor(getColor(R.color.surface2)) }
+            clipToOutline = true
+            sessions.thumbFile(s.id).takeIf { it.exists() }?.let { f ->
+                BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = 4 })?.let { setImageBitmap(it) }
+            }
+        }
+        val texts = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = (12 * dp).toInt()
+            }
+            addView(TextView(this@MainActivity).apply {
+                text = s.title
+                textSize = 15f
+                isSingleLine = true
+                ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                setTextColor(getColor(R.color.ink))
+                setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = sessionDetails(s)
+                textSize = 12.5f
+                fontFeatureSettings = "tnum"
+                setTextColor(getColor(R.color.muted))
+            })
+        }
+        val more = ImageButton(this).apply {
+            layoutParams = LinearLayout.LayoutParams((44 * dp).toInt(), (44 * dp).toInt())
+            setImageResource(R.drawable.ic_more)
+            imageTintList = ColorStateList.valueOf(getColor(R.color.muted))
+            background = getDrawable(android.R.drawable.list_selector_background)
+            contentDescription = getString(R.string.more)
+            setOnClickListener { showSessionMenu(it, s) }
+        }
+        row.addView(thumb); row.addView(texts); row.addView(more)
+        return row
+    }
+
+    /** « Aujourd'hui 14:02 · 4,62 km · 22:00 » */
+    private fun sessionDetails(s: Session): String {
+        val zone = ZoneId.systemDefault()
+        val dt = Instant.ofEpochMilli(s.savedAt).atZone(zone)
+        val today = LocalDate.now(zone)
+        val day = when (dt.toLocalDate()) {
+            today -> "Aujourd'hui"
+            today.minusDays(1) -> "Hier"
+            else -> dt.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.FRANCE))
+        }
+        val parts = mutableListOf(day + " " + dt.format(DateTimeFormatter.ofPattern("HH:mm")))
+        s.distanceM?.let { parts.add(String.format(Locale.FRANCE, "%.2f km", it / 1000)) }
+        s.durationMs?.let { parts.add(formatDuration(it)) }
+        if (s.controls.size >= 2) parts.add("${s.controls.size - 2} postes")
+        return parts.joinToString(" · ")
+    }
+
+    private fun showSessionMenu(anchor: View, s: Session) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add(0, 1, 0, "Ouvrir")
+        popup.menu.add(0, 2, 1, "Renommer…")
+        popup.menu.add(0, 3, 2, "Supprimer")
+        popup.setOnMenuItemClickListener {
+            when (it.itemId) {
+                1 -> restore(s)
+                2 -> {
+                    val pad = (20 * resources.displayMetrics.density).toInt()
+                    val edit = EditText(this).apply { setText(s.title); setSelection(text.length) }
+                    AlertDialog.Builder(this)
+                        .setTitle("Nom de la session")
+                        .setView(LinearLayout(this).apply { setPadding(pad, pad / 2, pad, 0); addView(edit, LinearLayout.LayoutParams(-1, -2)) })
+                        .setPositiveButton("OK") { _, _ -> sessions.rename(s.id, edit.text.toString()); buildHome() }
+                        .setNegativeButton("Annuler", null)
+                        .show()
+                }
+                3 -> AlertDialog.Builder(this)
+                    .setMessage("Supprimer la session « ${s.title} » ?\nLes fichiers de carte et de trace ne sont pas effacés.")
+                    .setPositiveButton("Supprimer") { _, _ -> sessions.delete(s.id); buildHome() }
+                    .setNegativeButton("Annuler", null)
+                    .show()
+            }
+            true
+        }
+        popup.show()
     }
 
     // ---------- Interface ----------
@@ -979,7 +1254,7 @@ class MainActivity : Activity(), OverlayView.Listener {
         val mode = overlay.mode
         val t = overlay.track
         val nothing = t == null && overlay.mapBitmap == null
-        emptyState.visibility = if (nothing) View.VISIBLE else View.GONE
+        home.visibility = if (nothing) View.VISIBLE else View.GONE
         val sheet = splitsVisible
         bottomPanel.visibility = if (nothing || sheet) View.GONE else View.VISIBLE
         btnFit.visibility = if (nothing) View.GONE else View.VISIBLE
@@ -1095,6 +1370,7 @@ class MainActivity : Activity(), OverlayView.Listener {
             splitsVisible -> hideSplits()
             snackbar.visibility == View.VISIBLE -> snackbar.visibility = View.GONE
             overlay.mode != OverlayView.Mode.MAP -> overlay.mode = OverlayView.Mode.MAP
+            overlay.mapBitmap != null || overlay.track != null -> goHome()
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
@@ -1130,5 +1406,6 @@ class MainActivity : Activity(), OverlayView.Listener {
         private const val REQ_MAP = 1
         private const val REQ_GPX = 2
         private const val REQ_EXPORT = 3
+        private const val REQ_GARMIN = 4
     }
 }

@@ -9,8 +9,10 @@ sur une **carte de course d'orientation**, fournie en **image** (JPEG, PNG, WebP
 - Ouvrir une trace **GPX**, **FIT** (fichier natif des montres Garmin, Coros, Suunto…), **TCX**
   ou le **ZIP** « fichier d'origine » de Garmin Connect. Altitude et fréquence cardiaque sont lues
   (extensions Garmin des GPX, champs FIT/TCX).
-- **Garmin** : sur connect.garmin.com, activité → roue dentée → « Exporter le fichier d'origine »
-  (ZIP avec le FIT) ou « Exporter au format GPX », puis ouvrir le fichier dans Trace O.
+- **Importer depuis Garmin** : Garmin Connect s'ouvre dans l'app. On se connecte sur la page
+  officielle de Garmin (Trace O ne voit pas les identifiants), on choisit l'activité, puis
+  « Exporter le fichier d'origine » ou « Exporter au format GPX » : la trace s'ouvre directement.
+  L'API officielle de Garmin est réservée aux entreprises partenaires, d'où ce fonctionnement.
 - **Statistiques** : distance, durée, allure, dénivelé positif, FC moyenne et maximale.
 - **Couleur de la trace** au choix : allure, altitude, fréquence cardiaque ou couleur unie, avec
   légende chiffrée.
@@ -42,7 +44,9 @@ sur une **carte de course d'orientation**, fournie en **image** (JPEG, PNG, WebP
 - Interface pensée pour le téléphone : carte en plein écran, panneaux flottants, double-tap pour
   zoomer, bouton ⤢ pour revoir toute la carte, déplacements animés, retour (◁) pour quitter le
   mode en cours, « Annuler » après un effacement, vibrations légères, écran allumé pendant le replay.
-- La dernière carte, la dernière trace et le calage sont conservés à la réouverture.
+- **Sessions** : chaque analyse (carte, trace, calage, postes) est enregistrée automatiquement.
+  L'app s'ouvre sur l'accueil, avec la dernière session à reprendre (miniature) et la liste des
+  sessions précédentes (renommer, supprimer). Le bouton retour revient à l'accueil.
 
 ## Récupérer l'APK depuis le téléphone
 
@@ -78,6 +82,8 @@ pour ARM) : le plus simple est de passer par GitHub Actions.
 | `FitParser.kt` | Lecture des fichiers FIT (messages « record ») |
 | `Splits.kt` | Détection des passages aux postes, temps intermédiaires |
 | `ProfileView.kt` | Graphique allure / altitude / FC |
+| `SessionStore.kt` | Sessions enregistrées (JSON + miniatures) |
+| `GarminActivity.kt` | Garmin Connect intégré, récupération des exports |
 | `Track.kt` | Projection en mètres, distance, durée, vitesse lissée, position à un instant |
 | `Similarity.kt` | Calcul du calage (rotation + échelle + translation) |
 | `MapLoader.kt` | Chargement des images et rendu des PDF (`PdfRenderer`) |
@@ -85,4 +91,5 @@ pour ARM) : le plus simple est de passer par GitHub Actions.
 | `MainActivity.kt` | Menus, fichiers reçus, temps intermédiaires, réglages, session |
 
 Aucune dépendance externe : seulement le SDK Android et Kotlin.
+La permission Internet ne sert qu'à l'écran Garmin Connect.
 Android 8.0 (API 26) minimum.

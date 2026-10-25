@@ -40,6 +40,15 @@
     <string name="metric_ele">Altitude</string>
     <string name="metric_hr">FC</string>
     <string name="color_mode">Couleur de la trace…</string>
+    <string name="garmin_title">Garmin Connect</string>
+    <string name="garmin_subtitle">Connexion sur la page officielle de Garmin</string>
+    <string name="garmin_how_title">Importer une activité</string>
+    <string name="garmin_how">1. Connectez-vous avec votre compte Garmin (sur la page de Garmin : Trace O ne voit pas vos identifiants).\n2. Ouvrez l\'activité voulue dans la liste.\n3. Menu de l\'activité (roue dentée ou « … ») → « Exporter le fichier d\'origine » (le plus complet : FC, altitude) ou « Exporter au format GPX ».\nLa trace s\'ouvre alors directement dans Trace O.\n\nBouton d\'export introuvable ? Menu ⋮ → « Version ordinateur ».</string>
+    <string name="understood">Compris</string>
+    <string name="import_garmin">Importer depuis Garmin</string>
+    <string name="resume">Reprendre</string>
+    <string name="previous_sessions">Sessions précédentes</string>
+    <string name="home">Accueil et sessions</string>
     <string name="slow">lent</string>
     <string name="fast">rapide</string>
 </resources>

@@ -79,19 +79,33 @@
             android:tint="@color/ink" />
     </LinearLayout>
 
-    <!-- Accueil (rien d'ouvert) -->
+    <!-- Accueil : bienvenue + dernière session + sessions précédentes -->
+    <ScrollView
+        android:id="@+id/home"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:paddingTop="84dp"
+        android:paddingBottom="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="14dp">
+
     <LinearLayout
         android:id="@+id/emptyState"
         style="@style/Card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:layout_marginHorizontal="24dp"
+        android:layout_marginTop="4dp"
         android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:padding="22dp">
 
         <ImageView
+            android:id="@+id/welcomeLogo"
             android:layout_width="56dp"
             android:layout_height="56dp"
             android:importantForAccessibility="no"
@@ -107,6 +121,7 @@
             android:textSize="20sp" />
 
         <TextView
+            android:id="@+id/welcomeText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
@@ -146,7 +161,23 @@
             android:textColor="@color/ink"
             android:textSize="16sp" />
 
+        <Button
+            android:id="@+id/btnEmptyGarmin"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_secondary"
+            android:drawableStart="@drawable/ic_watch"
+            android:drawableTint="@color/ink"
+            android:fontFamily="sans-serif-medium"
+            android:paddingHorizontal="18dp"
+            android:text="@string/import_garmin"
+            android:textAllCaps="false"
+            android:textColor="@color/ink"
+            android:textSize="16sp" />
+
         <TextView
+            android:id="@+id/welcomeTip"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
@@ -155,6 +186,107 @@
             android:textColor="@color/muted"
             android:textSize="12sp" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/resumeHeader"
+        style="@style/SectionHeader"
+        android:text="@string/resume" />
+
+    <LinearLayout
+        android:id="@+id/lastSession"
+        style="@style/Card"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_card_ripple"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/lastThumb"
+            android:layout_width="match_parent"
+            android:layout_height="170dp"
+            android:background="@color/map_bg"
+            android:importantForAccessibility="no"
+            android:padding="6dp"
+            android:scaleType="fitCenter" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="4dp"
+            android:paddingBottom="12dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/lastTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="middle"
+                    android:fontFamily="sans-serif-medium"
+                    android:singleLine="true"
+                    android:textColor="@color/ink"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/lastSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFeatureSettings="tnum"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnResume"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_primary"
+                android:drawableStart="@drawable/ic_play"
+                android:drawablePadding="4dp"
+                android:drawableTint="#FFFFFF"
+                android:fontFamily="sans-serif-medium"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingHorizontal="14dp"
+                android:text="@string/resume"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF" />
+
+            <ImageButton
+                android:id="@+id/btnLastMore"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/more"
+                android:src="@drawable/ic_more"
+                android:tint="@color/muted" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/previousHeader"
+        style="@style/SectionHeader"
+        android:text="@string/previous_sessions" />
+
+    <LinearLayout
+        android:id="@+id/sessionList"
+        style="@style/Card"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingVertical="4dp" />
+    </LinearLayout>
+    </ScrollView>
 
     <!-- Bouton flottant « voir toute la carte » -->
     <ImageButton

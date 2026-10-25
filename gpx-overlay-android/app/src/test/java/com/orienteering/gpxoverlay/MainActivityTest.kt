@@ -176,7 +176,13 @@ class MainActivityTest {
         controller.pause().stop().destroy()
         val restored = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         val ov2 = restored.findViewById<OverlayView>(R.id.overlay)
+        // L'app s'ouvre sur l'accueil, avec la dernière session à reprendre.
+        assertEquals(android.view.View.VISIBLE, restored.findViewById<android.view.View>(R.id.home).visibility)
+        assertEquals(android.view.View.VISIBLE, restored.findViewById<android.view.View>(R.id.lastSession).visibility)
+        screenshotRoot(restored, "ecran_accueil_sessions")
+        restored.findViewById<android.view.View>(R.id.btnResume).performClick()
         waitFor { ov2.mapBitmap != null && ov2.track != null }
+        assertEquals(android.view.View.GONE, restored.findViewById<android.view.View>(R.id.home).visibility)
         val v1 = FloatArray(9).also { saved.getValues(it) }
         val v2 = FloatArray(9).also { ov2.traceMatrix.getValues(it) }
         for (k in 0 until 9) assertEquals(v1[k], v2[k], 1e-3f)
@@ -282,6 +288,7 @@ class MainActivityTest {
         controller.pause().stop().destroy()
         val restored = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         val ov2 = restored.findViewById<OverlayView>(R.id.overlay)
+        restored.findViewById<android.view.View>(R.id.lastSession).performClick()
         waitFor { ov2.mapBitmap != null && ov2.track != null }
         assertEquals(5, ov2.controls.size)
     }
@@ -298,6 +305,76 @@ class MainActivityTest {
         val activity = Robolectric.buildActivity(MainActivity::class.java, intent).setup().get()
         val overlay = activity.findViewById<OverlayView>(R.id.overlay)
         waitFor { overlay.mapBitmap != null && overlay.track != null }
+        assertEquals(241, overlay.track!!.points.size)
+    }
+
+    @Test
+    fun sessionsAreListedAndRestorable() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        val overlay = activity.findViewById<OverlayView>(R.id.overlay)
+        val store = SessionStore(File(activity.filesDir, "sessions"))
+        assertTrue(store.list().isEmpty())
+
+        // Session 1 : carte + trace.
+        openVia(activity, R.id.btnOpenMap, resourceFile("carte_test.jpg"))
+        waitFor { overlay.mapBitmap != null }
+        openVia(activity, R.id.btnOpenTrack, resourceFile("trace_test.gpx"))
+        waitFor { overlay.track != null }
+        assertEquals(1, store.list().size)
+        val s1 = store.list().first()
+        assertEquals(s1.mapUri?.endsWith("carte_test.jpg"), true)
+        assertEquals(s1.trackUri?.endsWith("trace_test.gpx"), true)
+        assertEquals(241.0, 0.0 + overlay.track!!.points.size, 0.0)
+        waitFor { store.thumbFile(s1.id).exists() }
+
+        // Retour : accueil, avec la session à reprendre.
+        activity.onBackPressed()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(android.view.View.VISIBLE, activity.findViewById<android.view.View>(R.id.home).visibility)
+        assertTrue(overlay.track == null && overlay.mapBitmap == null)
+        screenshotRoot(activity, "ecran_accueil_session1")
+
+        // Session 2 : trace seule (nouvelle combinaison de fichiers).
+        openVia(activity, R.id.btnEmptyTrack, resourceFile("trace_test.gpx"))
+        waitFor { overlay.track != null }
+        activity.onBackPressed()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(2, store.list().size)
+        val list = activity.findViewById<android.widget.LinearLayout>(R.id.sessionList)
+        assertEquals(1, list.childCount) // la session 1 est dans « Sessions précédentes »
+
+        // Renommer et rouvrir la session 1 depuis la liste.
+        store.rename(s1.id, "Régional de Lyon")
+        assertEquals("Régional de Lyon", store.get(s1.id)!!.title)
+        list.getChildAt(0).performClick()
+        waitFor { overlay.mapBitmap != null && overlay.track != null }
+        // Rouvrir ne crée pas de doublon.
+        activity.onBackPressed()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(2, store.list().size)
+        assertEquals(s1.id, store.list().first().id)
+
+        store.delete(s1.id)
+        assertEquals(1, store.list().size)
+        assertTrue(!store.thumbFile(s1.id).exists())
+    }
+
+    @Test
+    fun garminImportOpensTrack() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val overlay = activity.findViewById<OverlayView>(R.id.overlay)
+        activity.findViewById<android.view.View>(R.id.btnEmptyGarmin).performClick()
+        val started = shadowOf(activity).nextStartedActivityForResult
+        assertEquals(GarminActivity::class.java.name, started.intent.component!!.className)
+        // Fichier tel que l'écran Garmin le renvoie (copié dans l'app).
+        val dir = File(activity.filesDir, "imports").apply { mkdirs() }
+        val f = File(dir, "123_activity.gpx").apply { writeBytes(resourceFile("trace_test.gpx").readBytes()) }
+        shadowOf(activity).receiveResult(
+            started.intent, Activity.RESULT_OK,
+            Intent().setData(Uri.fromFile(f)).putExtra(GarminActivity.EXTRA_NAME, "activity.gpx")
+        )
+        waitFor { overlay.track != null }
         assertEquals(241, overlay.track!!.points.size)
     }
 }
