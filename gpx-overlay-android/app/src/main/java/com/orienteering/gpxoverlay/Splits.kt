@@ -21,6 +21,8 @@ data class Leg(
     val avgHr: Double? = null,
     /** Dénivelé positif sur la section (m). */
     val gainM: Double = 0.0,
+    /** Dénivelé négatif sur la section (m, valeur positive). */
+    val lossM: Double = 0.0,
 ) {
     /** Allure en secondes par km, ou null. */
     val paceSecPerKm: Double? get() = timeMs?.let { if (runM > 1) it / 1000.0 / (runM / 1000.0) else null }
@@ -116,6 +118,7 @@ object Splits {
                     sure = a.sure && b.sure,
                     avgHr = track.avgHrBetween(a.pointIndex, b.pointIndex),
                     gainM = track.gainBetween(a.pointIndex, b.pointIndex),
+                    lossM = track.lossBetween(a.pointIndex, b.pointIndex),
                 )
             )
         }

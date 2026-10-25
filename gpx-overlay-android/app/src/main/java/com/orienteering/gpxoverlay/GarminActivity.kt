@@ -22,6 +22,7 @@ import android.widget.TextView
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.SecureRandom
 import java.util.concurrent.Executors
 
 /**
@@ -68,19 +69,34 @@ class GarminActivity : Activity() {
             displayZoomControls = false
             allowFileAccess = false
             allowContentAccess = false
+            @Suppress("DEPRECATION")
+            allowFileAccessFromFileURLs = false
+            @Suppress("DEPRECATION")
+            allowUniversalAccessFromFileURLs = false
+            setGeolocationEnabled(false)
+            safeBrowsingEnabled = true
+            // Pas d'enregistrement de formulaires ni de mots de passe par la WebView.
+            @Suppress("DEPRECATION")
+            saveFormData = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             setSupportMultipleWindows(false)
         }
         applyUserAgent()
         CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        // Connexion Garmin = même site (garmin.com) : les cookies tiers (pistage) ne sont pas nécessaires.
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, false)
         web.addJavascriptInterface(bridge, "TraceOBridge")
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url
                 if (isGarmin(url)) return false
-                // Hors de Garmin : ouverture dans le navigateur du téléphone.
-                try { startActivity(Intent(Intent.ACTION_VIEW, url)) } catch (_: Exception) { }
+                // Hors de Garmin : seulement les liens web, ouverts dans le navigateur du téléphone
+                // (jamais d'« intent: », « file: », etc.).
+                if (url.scheme == "https" || url.scheme == "http") {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, url).addCategory(Intent.CATEGORY_BROWSABLE))
+                    } catch (_: Exception) { }
+                }
                 return true
             }
 
@@ -164,7 +180,7 @@ class GarminActivity : Activity() {
         web.settings.userAgentString = if (desktop) DESKTOP_UA else null
     }
 
-    private fun isGarmin(u: Uri?): Boolean {
+    internal fun isGarmin(u: Uri?): Boolean {
         val host = u?.host?.lowercase() ?: return false
         return u.scheme == "https" && (host == "garmin.com" || host.endsWith(".garmin.com"))
     }
@@ -174,16 +190,10 @@ class GarminActivity : Activity() {
         if (!isGarmin(uri)) { info("Téléchargement refusé : ce fichier ne vient pas de Garmin."); return }
         progress.visibility = View.VISIBLE
         info("Récupération de l'activité…")
-        val cookies = CookieManager.getInstance().getCookie(url)
+        val ua = userAgent ?: web.settings.userAgentString
         io.execute {
             try {
-                val conn = URL(url).openConnection() as HttpURLConnection
-                conn.connectTimeout = 20_000
-                conn.readTimeout = 60_000
-                cookies?.let { conn.setRequestProperty("Cookie", it) }
-                conn.setRequestProperty("User-Agent", userAgent ?: web.settings.userAgentString)
-                if (conn.responseCode !in 200..299) throw IllegalStateException("réponse ${conn.responseCode} de Garmin")
-                val bytes = conn.inputStream.use { readLimited(it) }
+                val bytes = fetchSafely(url, ua)
                 deliver(bytes, name)
             } catch (e: Exception) {
                 runOnUiThread { progress.visibility = View.GONE; info("Échec du téléchargement : ${e.message}") }
@@ -191,24 +201,80 @@ class GarminActivity : Activity() {
         }
     }
 
+    /**
+     * Télécharge en suivant les redirections à la main : les cookies de session Garmin ne sont
+     * envoyés qu'aux serveurs garmin.com (jamais au serveur de stockage vers lequel Garmin redirige).
+     */
+    internal fun fetchSafely(start: String, userAgent: String?): ByteArray {
+        var url = start
+        repeat(MAX_REDIRECTS) {
+            val u = Uri.parse(url)
+            if (u.scheme != "https") throw IllegalStateException("adresse non sécurisée refusée")
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = false
+            conn.connectTimeout = 20_000
+            conn.readTimeout = 60_000
+            if (isGarmin(u)) CookieManager.getInstance().getCookie(url)?.let { conn.setRequestProperty("Cookie", it) }
+            userAgent?.let { conn.setRequestProperty("User-Agent", it) }
+            try {
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val loc = conn.getHeaderField("Location") ?: throw IllegalStateException("redirection sans adresse")
+                    url = URL(URL(url), loc).toString()
+                    return@repeat
+                }
+                if (code !in 200..299) throw IllegalStateException("réponse $code du serveur")
+                if (conn.contentLengthLong > MAX_BYTES) throw IllegalStateException("fichier trop gros")
+                return conn.inputStream.use { readLimited(it) }
+            } finally {
+                conn.disconnect()
+            }
+        }
+        throw IllegalStateException("trop de redirections")
+    }
+
     /** Certains exports Garmin passent par un « blob » : on le lit depuis la page. */
     private fun fetchBlob(url: String, name: String) {
-        bridge.pendingName = name
-        val safe = url.replace("'", "")
+        // Seuls les blobs créés par une page Garmin sont lus.
+        if (!url.startsWith("blob:https://") || !isGarmin(Uri.parse(url.removePrefix("blob:")))) {
+            info("Téléchargement refusé : ce fichier ne vient pas de Garmin.")
+            return
+        }
+        val token = bridge.arm(name)
+        val safe = url.replace(Regex("[^A-Za-z0-9:/._%-]"), "")
         web.evaluateJavascript(
-            "(function(){fetch('$safe').then(function(r){return r.blob();}).then(function(b){" +
-                "var fr=new FileReader();fr.onload=function(){TraceOBridge.onData(fr.result.split(',')[1], b.type||'');};" +
-                "fr.readAsDataURL(b);}).catch(function(e){TraceOBridge.onError(String(e));});})()",
+            "(function(){var t='$token';fetch('$safe').then(function(r){return r.blob();}).then(function(b){" +
+                "var fr=new FileReader();fr.onload=function(){TraceOBridge.onData(t, fr.result.split(',')[1], b.type||'');};" +
+                "fr.readAsDataURL(b);}).catch(function(e){TraceOBridge.onError(t, String(e));});})()",
             null
         )
     }
 
+    /**
+     * Pont JavaScript → app. Il n'accepte qu'une réponse, portant le code à usage unique créé
+     * par [fetchBlob] : un script tiers (pub, cadre intégré) ne peut donc pas y déposer de fichier.
+     */
     inner class Bridge {
         @Volatile var pendingName: String = "garmin"
+        @Volatile private var token: String? = null
+
+        internal fun arm(name: String): String {
+            pendingName = name
+            val b = ByteArray(24).also { SecureRandom().nextBytes(it) }
+            return Base64.encodeToString(b, Base64.NO_WRAP or Base64.URL_SAFE).also { token = it }
+        }
+
+        /** Vérifie et consomme le code (une seule utilisation). */
+        private fun consume(t: String?): Boolean {
+            val expected = token ?: return false
+            if (t == null || !java.security.MessageDigest.isEqual(expected.toByteArray(), t.toByteArray())) return false
+            token = null
+            return true
+        }
 
         @JavascriptInterface
-        fun onData(base64: String, type: String) {
-            if (!isGarmin(pageUrl?.let(Uri::parse))) return
+        fun onData(t: String?, base64: String, type: String) {
+            if (!isGarmin(pageUrl?.let(Uri::parse)) || !consume(t)) return
             try {
                 val bytes = Base64.decode(base64, Base64.DEFAULT)
                 if (bytes.size > MAX_BYTES) throw IllegalStateException("fichier trop gros")
@@ -226,8 +292,9 @@ class GarminActivity : Activity() {
         }
 
         @JavascriptInterface
-        fun onError(msg: String) {
-            runOnUiThread { info("Échec de la récupération : $msg") }
+        fun onError(t: String?, msg: String) {
+            if (!consume(t)) return
+            runOnUiThread { info("Échec de la récupération : ${msg.take(120)}") }
         }
     }
 
@@ -265,6 +332,7 @@ class GarminActivity : Activity() {
         const val START_URL = "https://connect.garmin.com/app/activities"
         const val EXTRA_NAME = "name"
         private const val MAX_BYTES = 64 * 1024 * 1024
+        private const val MAX_REDIRECTS = 5
         private const val DESKTOP_UA =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     }

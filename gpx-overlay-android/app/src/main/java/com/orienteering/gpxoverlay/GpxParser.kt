@@ -19,24 +19,42 @@ object GpxParser {
     class GpxException(msg: String) : Exception(msg)
 
     fun parse(input: InputStream): Track {
+        val data = input.readBytes()
+        // Un GPX/TCX n'a jamais besoin de DTD : on refuse toute déclaration (XXE, « billion laughs »).
+        if (hasDoctype(data)) throw GpxException("Fichier refusé : déclaration DOCTYPE/ENTITY non autorisée.")
         val factory = SAXParserFactory.newInstance()
         factory.isNamespaceAware = true
-        for (f in listOf(
-            "http://xml.org/sax/features/external-general-entities",
-            "http://xml.org/sax/features/external-parameter-entities",
+        for ((f, v) in listOf(
+            "http://xml.org/sax/features/external-general-entities" to false,
+            "http://xml.org/sax/features/external-parameter-entities" to false,
+            "http://apache.org/xml/features/nonvalidating/load-external-dtd" to false,
+            "http://apache.org/xml/features/disallow-doctype-decl" to true,
+            javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING to true,
         )) {
-            try { factory.setFeature(f, false) } catch (_: Exception) { }
+            try { factory.setFeature(f, v) } catch (_: Exception) { }
         }
         val handler = Handler()
         try {
-            factory.newSAXParser().parse(input, handler)
+            factory.newSAXParser().parse(data.inputStream(), handler)
+        } catch (e: TooManyPoints) {
+            throw GpxException("Trace trop longue (plus de ${Track.MAX_POINTS} points).")
         } catch (e: Exception) {
+            if (e.cause is TooManyPoints) throw GpxException("Trace trop longue (plus de ${Track.MAX_POINTS} points).")
             throw GpxException("Fichier de trace illisible : ${e.message}")
         }
         val segments = handler.trackSegments.filter { it.isNotEmpty() }
             .ifEmpty { handler.routes.filter { it.isNotEmpty() } }
         if (segments.isEmpty()) throw GpxException("Aucun point de trace avec position GPS dans ce fichier.")
         return Track(handler.name, segments)
+    }
+
+    private class TooManyPoints : RuntimeException()
+
+    /** Cherche « <!DOCTYPE » ou « <!ENTITY » dans le début du fichier (UTF-8/ASCII ou UTF-16). */
+    fun hasDoctype(data: ByteArray): Boolean {
+        val n = minOf(data.size, 64 * 1024)
+        val head = String(data, 0, n, Charsets.ISO_8859_1).replace("\u0000", "")
+        return head.contains("<!DOCTYPE", ignoreCase = true) || head.contains("<!ENTITY", ignoreCase = true)
     }
 
     fun parseTime(s: String): Long? {
@@ -51,6 +69,11 @@ object GpxParser {
 
     private class Handler : DefaultHandler() {
         val trackSegments = mutableListOf<MutableList<TrackPoint>>()
+        private var count = 0
+        private fun add(seg: MutableList<TrackPoint>, p: TrackPoint) {
+            if (++count > Track.MAX_POINTS) throw TooManyPoints()
+            seg.add(p)
+        }
         val routes = mutableListOf<MutableList<TrackPoint>>()
         var name: String? = null
 
@@ -112,7 +135,7 @@ object GpxParser {
                         // Les Trackpoint sans position (pause, capteur seul) sont ignorés.
                         if (lat in -90.0..90.0 && lon in -180.0..180.0) {
                             val seg = current ?: mutableListOf<TrackPoint>().also { current = it; trackSegments.add(it) }
-                            seg.add(TrackPoint(lat, lon, ele, time, hr))
+                            add(seg, TrackPoint(lat, lon, ele, time, hr))
                         }
                         inPoint = false; tcxPoint = false
                     }
@@ -121,7 +144,7 @@ object GpxParser {
                             current = it
                             if (n == "trkpt") trackSegments.add(it) else routes.add(it)
                         }
-                        seg.add(TrackPoint(lat, lon, ele, time, hr))
+                        add(seg, TrackPoint(lat, lon, ele, time, hr))
                         inPoint = false
                     }
                 }

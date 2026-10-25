@@ -34,6 +34,7 @@
     <string name="stat_time">Durée</string>
     <string name="stat_pace">Allure</string>
     <string name="stat_gain">D+</string>
+    <string name="stat_loss">D−</string>
     <string name="stat_hr">FC moy.</string>
     <string name="profile">Profil</string>
     <string name="metric_pace">Allure</string>

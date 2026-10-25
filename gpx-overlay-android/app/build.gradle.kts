@@ -11,25 +11,35 @@ android {
         applicationId = "com.orienteering.gpxoverlay"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
     }
 
+    // Clé privée de publication, fournie par les secrets GitHub (jamais dans le dépôt).
+    val releaseKeystore = System.getenv("RELEASE_KEYSTORE")?.takeIf { file(it).exists() }
+
     signingConfigs {
-        // Clé fixe versionnée : chaque APK compilé (sur GitHub ou en local) a la même
-        // signature, donc les mises à jour s'installent sans désinstaller l'app.
+        // Clé de développement versionnée (publique) : pour les essais seulement.
         getByName("debug") {
             storeFile = file("debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "release" else "debug")
         }
     }
 

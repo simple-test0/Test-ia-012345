@@ -425,6 +425,15 @@ class MainActivity : Activity(), OverlayView.Listener {
             Intent.ACTION_VIEW -> intent.data?.let(uris::add)
             else -> return
         }
+        // Une autre app ne peut envoyer que des « content:// » : un « file:// » pourrait viser
+        // les fichiers privés de Trace O (sessions, cookies Garmin…).
+        val refused = uris.count { it.scheme != "content" }
+        uris.removeAll { it.scheme != "content" }
+        if (refused > 0 && uris.isEmpty()) {
+            toast("Fichier refusé : ouvrez-le depuis le gestionnaire de fichiers ou avec « Trace ».")
+            setIntent(Intent(this, MainActivity::class.java))
+            return
+        }
         if (uris.isEmpty()) {
             val text = intent.getStringExtra(Intent.EXTRA_TEXT)
             if (text != null && text.contains("strava", ignoreCase = true)) {
@@ -479,7 +488,25 @@ class MainActivity : Activity(), OverlayView.Listener {
         name = name.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(80)
         // Nom unique : plusieurs fichiers peuvent arriver dans la même milliseconde.
         val out = File(dir, "${System.currentTimeMillis()}-${importCounter.incrementAndGet()}_$name")
-        contentResolver.openInputStream(uri)!!.use { input -> out.outputStream().use { input.copyTo(it) } }
+        try {
+            contentResolver.openInputStream(uri)!!.use { input ->
+                out.outputStream().use { output ->
+                    // Copie limitée : un fichier énorme ne doit pas remplir le stockage.
+                    val buf = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > TrackParser.MAX_FILE) throw IllegalStateException("fichier trop gros (plus de 100 Mo)")
+                        output.write(buf, 0, n)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            out.delete()
+            throw e
+        }
         val head = ByteArray(16)
         val n = out.inputStream().use { it.read(head) }
         val type = contentResolver.getType(uri) ?: ""
@@ -552,7 +579,8 @@ class MainActivity : Activity(), OverlayView.Listener {
     }
 
     private fun choosePdfPage(uri: Uri, count: Int) {
-        val items = Array(count) { "Page ${it + 1}" }
+        // Un PDF piégé peut annoncer des millions de pages : on en propose 200 au plus.
+        val items = Array(minOf(count, 200)) { "Page ${it + 1}" }
         AlertDialog.Builder(this)
             .setTitle("Quelle page du PDF ?")
             .setItems(items) { _, which -> openMap(uri, which, refitTrace = overlay.mapBitmap == null || uri != mapUri) }
@@ -683,7 +711,7 @@ class MainActivity : Activity(), OverlayView.Listener {
                 })
                 val extra = listOfNotNull(
                     leg.avgHr?.let { "♥ ${it.toInt()}" },
-                    if (this@MainActivity.overlay.track?.hasEle == true) "↗ ${leg.gainM.toInt()} m" else null,
+                    if (this@MainActivity.overlay.track?.hasEle == true) "↗ ${leg.gainM.toInt()} ↘ ${leg.lossM.toInt()} m" else null,
                 ).joinToString(" · ")
                 if (extra.isNotEmpty()) addView(TextView(this@MainActivity).apply {
                     text = extra
@@ -1291,6 +1319,8 @@ class MainActivity : Activity(), OverlayView.Listener {
         if (t != null) {
             statGainBox.visibility = if (t.hasEle) View.VISIBLE else View.GONE
             statGain.text = String.format(Locale.FRANCE, "%d m", t.gainM.toInt())
+            findViewById<View>(R.id.statLossBox).visibility = if (t.hasEle) View.VISIBLE else View.GONE
+            findViewById<TextView>(R.id.statLoss).text = String.format(Locale.FRANCE, "%d m", t.lossM.toInt())
             statHrBox.visibility = if (t.hasHr) View.VISIBLE else View.GONE
             statHr.text = t.avgHr?.let { String.format(Locale.FRANCE, "%d", it.toInt()) } ?: "—"
             findViewById<TextView>(R.id.statHrLabel).text = "FC moy." + (t.maxHr?.let { " · max $it" } ?: "")

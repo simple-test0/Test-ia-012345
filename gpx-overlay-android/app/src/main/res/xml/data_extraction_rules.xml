@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sauvegardes et transferts (Android 12+) : la connexion Garmin (cookies de la WebView) n'est jamais copiée. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="app_webview/" />
+        <exclude domain="sharedpref" path="WebViewChromiumPrefs.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="app_webview/" />
+        <exclude domain="sharedpref" path="WebViewChromiumPrefs.xml" />
+    </device-transfer>
+</data-extraction-rules>

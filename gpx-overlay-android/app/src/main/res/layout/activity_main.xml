@@ -356,6 +356,11 @@
                     <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_gain" />
                 </LinearLayout>
 
+                <LinearLayout android:id="@+id/statLossBox" style="@style/StatItem">
+                    <TextView android:id="@+id/statLoss" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                    <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_loss" />
+                </LinearLayout>
+
                 <LinearLayout android:id="@+id/statHrBox" style="@style/StatItem">
                     <TextView android:id="@+id/statHr" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
                     <TextView android:id="@+id/statHrLabel" style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_hr" />

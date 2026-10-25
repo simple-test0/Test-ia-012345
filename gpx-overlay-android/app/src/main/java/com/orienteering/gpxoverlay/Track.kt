@@ -44,6 +44,8 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
     val hrs: FloatArray
     /** Dénivelé positif cumulé depuis le début (m). */
     val cumGain: FloatArray
+    /** Dénivelé négatif cumulé depuis le début (m, valeur positive). */
+    val cumLoss: FloatArray
     val gainM: Double
     val lossM: Double
     val avgHr: Double?
@@ -97,6 +99,7 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
 
         // Dénivelé avec hystérésis de 3 m : on ignore les petites oscillations de l'altitude GPS.
         cumGain = FloatArray(points.size)
+        cumLoss = FloatArray(points.size)
         var gain = 0.0
         var loss = 0.0
         var ref = Float.NaN
@@ -108,6 +111,7 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
                 else if (ref - e >= 3f) { loss += ref - e; ref = e }
             }
             cumGain[i] = gain.toFloat()
+            cumLoss[i] = loss.toFloat()
         }
         gainM = gain
         lossM = loss
@@ -183,6 +187,9 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
 
     /** Dénivelé positif entre deux points (m). */
     fun gainBetween(from: Int, to: Int): Double = (cumGain[to] - cumGain[from]).toDouble()
+
+    /** Dénivelé négatif entre deux points (m, valeur positive). */
+    fun lossBetween(from: Int, to: Int): Double = (cumLoss[to] - cumLoss[from]).toDouble()
     val hasTimes: Boolean get() = speeds.any { !it.isNaN() }
 
     inline fun forEachSegment(block: (start: Int, end: Int) -> Unit) {
@@ -195,6 +202,8 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
 
     companion object {
         const val EARTH_R = 6_371_000.0
+        /** Au-delà, la trace est refusée (une course de 24 h à 1 point/s fait 86 400 points). */
+        const val MAX_POINTS = 500_000
 
         fun haversine(p: TrackPoint, q: TrackPoint): Double {
             val dLat = (q.lat - p.lat) * PI / 180

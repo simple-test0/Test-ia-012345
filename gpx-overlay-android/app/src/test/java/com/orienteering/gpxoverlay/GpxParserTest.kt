@@ -153,4 +153,33 @@ class GpxParserTest {
         val t = TrackParser.parse(bos.toByteArray().inputStream())
         assertEquals(2, t.points.size)
     }
+
+    @Test
+    fun xxeIsRefused() {
+        val xml = """<?xml version="1.0"?>
+            <!DOCTYPE gpx [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
+            <gpx><trk><name>&xxe;</name><trkseg>
+              <trkpt lat="45.0" lon="5.0"/><trkpt lat="45.001" lon="5.0"/>
+            </trkseg></trk></gpx>"""
+        val e = runCatching { parse(xml) }.exceptionOrNull()
+        assertTrue(e is GpxParser.GpxException)
+        assertTrue(e!!.message!!.contains("DOCTYPE"))
+    }
+
+    @Test
+    fun entityExpansionIsRefused() {
+        val xml = """<?xml version="1.0"?>
+            <!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">]>
+            <gpx><trk><name>&lol2;</name></trk></gpx>"""
+        assertTrue(runCatching { parse(xml) }.exceptionOrNull() is GpxParser.GpxException)
+        // Même en UTF-16 (octets nuls entre les caractères).
+        assertTrue(GpxParser.hasDoctype(xml.toByteArray(Charsets.UTF_16LE)))
+    }
+
+    @Test
+    fun oversizedInputIsRefused() {
+        val big = java.io.ByteArrayInputStream(ByteArray(2 * 1024 * 1024))
+        val e = runCatching { TrackParser.readLimited(big, 1024 * 1024) }.exceptionOrNull()
+        assertTrue(e is GpxParser.GpxException)
+    }
 }

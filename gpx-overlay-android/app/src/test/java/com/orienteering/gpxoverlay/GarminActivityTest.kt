@@ -35,8 +35,8 @@ class GarminActivityTest {
     fun exportedFileIsReturned() {
         val a = Robolectric.buildActivity(GarminActivity::class.java).setup().get()
         a.pageUrl = "https://connect.garmin.com/app/activity/123"
-        a.bridge.pendingName = "activity_123"
-        a.bridge.onData(Base64.encodeToString(gpx, Base64.DEFAULT), "application/gpx+xml")
+        val token = a.bridge.arm("activity_123")
+        a.bridge.onData(token, Base64.encodeToString(gpx, Base64.DEFAULT), "application/gpx+xml")
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
         assertTrue(a.isFinishing)
         assertEquals(Activity.RESULT_OK, shadowOf(a).resultCode)
@@ -46,11 +46,44 @@ class GarminActivityTest {
     }
 
     @Test
+    fun bridgeNeedsTheOneTimeCode() {
+        val a = Robolectric.buildActivity(GarminActivity::class.java).setup().get()
+        a.pageUrl = "https://connect.garmin.com/app/activity/123"
+        val data = Base64.encodeToString(gpx, Base64.DEFAULT)
+        // Sans export demandé, ou avec un faux code (script tiers) : ignoré.
+        a.bridge.onData(null, data, "")
+        a.bridge.onData("faux", data, "")
+        val token = a.bridge.arm("x")
+        a.bridge.onData("faux", data, "")
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        assertFalse(a.isFinishing)
+        // Le bon code fonctionne une seule fois.
+        a.bridge.onError(token, "test")
+        a.bridge.onData(token, data, "")
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        assertFalse(a.isFinishing)
+    }
+
+    @Test
     fun dataFromOtherSitesIsIgnored() {
         val a = Robolectric.buildActivity(GarminActivity::class.java).setup().get()
         a.pageUrl = "https://exemple.com/piege"
-        a.bridge.onData(Base64.encodeToString(gpx, Base64.DEFAULT), "application/gpx+xml")
+        val token = a.bridge.arm("x")
+        a.bridge.onData(token, Base64.encodeToString(gpx, Base64.DEFAULT), "application/gpx+xml")
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
         assertFalse(a.isFinishing)
+    }
+
+    @Test
+    fun onlyRealGarminHostsAreTrusted() {
+        val a = Robolectric.buildActivity(GarminActivity::class.java).setup().get()
+        fun ok(u: String) = a.isGarmin(android.net.Uri.parse(u))
+        assertTrue(ok("https://connect.garmin.com/app/activities"))
+        assertTrue(ok("https://sso.garmin.com/portal"))
+        assertTrue(ok("https://garmin.com"))
+        assertFalse(ok("http://connect.garmin.com/"))          // non chiffré
+        assertFalse(ok("https://evilgarmin.com/"))             // domaine imité
+        assertFalse(ok("https://connect.garmin.com.evil.net/")) // sous-domaine piège
+        assertFalse(ok("https://garmin.com@evil.net/"))         // identifiant dans l'URL
     }
 }

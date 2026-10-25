@@ -295,12 +295,15 @@ class MainActivityTest {
 
     @Test
     fun sharedFilesAreImported() {
+        // Les autres apps partagent des « content:// ».
+        val gpxUri = Uri.parse("content://com.exemple.fichiers/docs/trace_test.gpx")
+        val mapUri = Uri.parse("content://com.exemple.fichiers/docs/carte_test.jpg")
+        val cr = org.robolectric.RuntimeEnvironment.getApplication().contentResolver
+        shadowOf(cr).registerInputStream(gpxUri, resourceFile("trace_test.gpx").inputStream())
+        shadowOf(cr).registerInputStream(mapUri, resourceFile("carte_test.jpg").inputStream())
         val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
             type = "*/*"
-            putParcelableArrayListExtra(
-                Intent.EXTRA_STREAM,
-                arrayListOf(Uri.fromFile(resourceFile("trace_test.gpx")), Uri.fromFile(resourceFile("carte_test.jpg")))
-            )
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(gpxUri, mapUri))
         }
         val activity = Robolectric.buildActivity(MainActivity::class.java, intent).setup().get()
         val overlay = activity.findViewById<OverlayView>(R.id.overlay)
@@ -310,6 +313,22 @@ class MainActivityTest {
         val names = File(activity.filesDir, "imports").listFiles()!!.map { it.name }
         assertEquals(names.toString(), 2, names.size)
         assertTrue(names.toString(), names.any { it.endsWith("_trace_test.gpx") } && names.any { it.endsWith("_carte_test.jpg") })
+    }
+
+    @Test
+    fun fileUrisFromOtherAppsAreRefused() {
+        // Un « file:// » envoyé par une autre app pourrait viser les fichiers privés de Trace O.
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "*/*"
+            putExtra(Intent.EXTRA_STREAM, Uri.fromFile(resourceFile("trace_test.gpx")))
+        }
+        val activity = Robolectric.buildActivity(MainActivity::class.java, intent).setup().get()
+        shadowOf(Looper.getMainLooper()).idle()
+        Thread.sleep(300)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(activity.findViewById<OverlayView>(R.id.overlay).track == null)
+        val snack = activity.findViewById<android.widget.TextView>(R.id.snackText).text.toString()
+        assertTrue(snack, snack.contains("refusé"))
     }
 
     @Test

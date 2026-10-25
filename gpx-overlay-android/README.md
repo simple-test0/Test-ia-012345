@@ -58,8 +58,25 @@ https://github.com/simple-test0/Test-ia-012345/releases/download/traceo-latest/T
 Ouvrez le fichier téléchargé et autorisez l'installation depuis cette source si Android le demande.
 L'APK est aussi disponible dans l'onglet **Actions** (artifact `TraceO-apk`, en zip).
 
-L'APK est toujours signé avec la même clé (`app/debug.keystore`) : les mises à jour
-s'installent par-dessus la version précédente.
+### Signature de l'APK (sécurité)
+
+Le dépôt est public : la clé `app/debug.keystore` l'est donc aussi, et n'importe qui pourrait
+signer une fausse mise à jour. Pour publier avec une clé privée, ajoutez dans GitHub
+(Settings → Secrets and variables → Actions) les secrets `RELEASE_KEYSTORE_BASE64` (keystore en
+base64), `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS` et `RELEASE_KEY_PASSWORD`.
+La compilation les utilise automatiquement. Changer de clé oblige à désinstaller l'ancienne
+version une fois (les sessions sont perdues).
+
+### Sécurité
+
+- Fichiers importés : DTD/entités XML refusées (XXE), taille limitée (100 Mo), nombre de points
+  limité, ZIP lu avec une taille maximale par fichier.
+- Partages : seuls les `content://` d'autres apps sont acceptés (jamais de `file://`).
+- Garmin Connect : identifiants saisis sur la page de Garmin uniquement ; pont JavaScript limité
+  aux pages garmin.com et protégé par un code à usage unique ; cookies envoyés seulement aux
+  serveurs garmin.com (redirections suivies à la main) ; pas de cookies tiers ; Safe Browsing ;
+  liens externes ouverts dans le navigateur (http/https uniquement).
+- Connexion Garmin exclue des sauvegardes Android ; trafic non chiffré interdit.
 
 ## Compiler soi-même
 

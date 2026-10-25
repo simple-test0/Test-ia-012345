@@ -10,6 +10,7 @@ on:
       - "gpx-overlay-android/**"
   workflow_dispatch:
 
+# Écriture nécessaire uniquement pour publier la release (pas sur les pull requests).
 permissions:
   contents: write
 
@@ -32,8 +33,31 @@ jobs:
       - name: Tests unitaires
         run: ./gradlew --no-daemon testDebugUnitTest
 
+      # Clé de signature privée (secrets du dépôt). Sans elle, l'APK est signé avec la clé
+      # de développement publique : à configurer pour que personne d'autre ne puisse publier
+      # une fausse mise à jour (voir le README).
+      - name: Clé de signature
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "RELEASE_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "Signature avec la clé privée du dépôt."
+          else
+            echo "::warning::Secret RELEASE_KEYSTORE_BASE64 absent : APK signé avec la clé de développement publique."
+          fi
+
       - name: Compilation de l'APK
+        env:
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleRelease
+
+      - name: Effacer la clé
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
 
       - name: Renommer l'APK
         run: cp app/build/outputs/apk/release/app-release.apk TraceO.apk

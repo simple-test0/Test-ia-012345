@@ -128,6 +128,7 @@ object FitParser {
             val la = lat * SEMICIRCLE_TO_DEG
             val lo = lon * SEMICIRCLE_TO_DEG
             if (la in -90.0..90.0 && lo in -180.0..180.0) {
+                if (out.size >= Track.MAX_POINTS) throw GpxParser.GpxException("Trace trop longue (plus de ${Track.MAX_POINTS} points).")
                 out.add(TrackPoint(la, lo, alt, if (ts >= 0) (ts + FIT_EPOCH_S) * 1000 else null, hr))
             }
         }

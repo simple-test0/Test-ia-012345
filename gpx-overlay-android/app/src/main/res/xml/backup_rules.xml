@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sauvegardes Android (jusqu'à Android 11) : sessions et réglages oui, données Garmin non. -->
+<full-backup-content>
+    <exclude domain="root" path="app_webview/" />
+    <exclude domain="root" path="cache/" />
+    <exclude domain="sharedpref" path="WebViewChromiumPrefs.xml" />
+</full-backup-content>
