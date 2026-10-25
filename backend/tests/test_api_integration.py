@@ -69,6 +69,87 @@ def test_generate_queues_job_and_lists(client):
     assert all("job_id" in j and "images" in j for j in jobs)
 
 
+def test_generate_img2img_requires_init_image(client):
+    r = client.post(
+        "/api/v1/image/generate",
+        json={"model_id": "sd15", "prompt": "a cat", "mode": "img2img"},
+    )
+    assert r.status_code == 400
+    assert "init_image" in r.json()["detail"]
+
+
+def test_generate_img2img_with_image_queues(client):
+    import base64
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(buf, format="PNG")
+    data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    r = client.post(
+        "/api/v1/image/generate",
+        json={
+            "model_id": "sd15", "prompt": "a cat", "mode": "img2img",
+            "init_image": data_url, "strength": 0.5, "steps": 1,
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "queued"
+    job = client.get(f"/api/v1/image/jobs/{r.json()['job_id']}").json()
+    assert job["mode"] == "img2img"
+    assert job["strength"] == 0.5
+
+
+def test_generate_controlnet_requires_control_image(client):
+    r = client.post(
+        "/api/v1/image/generate",
+        json={"model_id": "sd15", "prompt": "a cat", "mode": "controlnet"},
+    )
+    assert r.status_code == 400
+
+
+def test_generate_controlnet_rejects_unsupported_family(client):
+    import base64
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(buf, format="PNG")
+    data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    r = client.post(
+        "/api/v1/image/generate",
+        json={
+            "model_id": "flux-schnell", "prompt": "a cat", "mode": "controlnet",
+            "controlnet_type": "canny", "control_image": data_url,
+        },
+    )
+    assert r.status_code == 400
+    assert "SD 1.5" in r.json()["detail"]
+
+
+def test_generate_unknown_mode_rejected(client):
+    r = client.post(
+        "/api/v1/image/generate",
+        json={"model_id": "sd15", "prompt": "a cat", "mode": "outpaint"},
+    )
+    assert r.status_code == 400
+
+
+def test_generate_corrupt_image_rejected(client):
+    r = client.post(
+        "/api/v1/image/generate",
+        json={
+            "model_id": "sd15", "prompt": "a cat", "mode": "img2img",
+            "init_image": "data:image/png;base64,not-valid-base64!!!",
+        },
+    )
+    assert r.status_code == 400
+
+
 def test_hf_search_mocked(client, monkeypatch):
     import api.routes.image_gen as route
 

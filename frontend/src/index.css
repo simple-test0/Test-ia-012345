@@ -2,20 +2,117 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: 224 71% 4%;
-  --foreground: 213 31% 91%;
-  --card: 224 71% 6%;
-  --border: 216 34% 17%;
-  --primary: 263 70% 60%;
-  --primary-foreground: 210 40% 98%;
-  --muted: 223 47% 11%;
-  --muted-foreground: 215 20% 55%;
-  --accent: 216 34% 17%;
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 63% 31%;
-  --destructive-foreground: 210 40% 98%;
-  --radius: 0.5rem;
+/* ────────────────────────────────────────────────────────────────────────────
+   Thème sombre « instrument » : charbon chaud, accent ambre, données en mono.
+   Valeurs = triplets RGB consommés par tailwind.config.ts via rgb(var(--x)).
+   ──────────────────────────────────────────────────────────────────────────── */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --gray-950: 18 16 14;    /* fond application */
+  --gray-900: 27 24 21;    /* panneaux */
+  --gray-800: 40 36 31;    /* survol / encarts */
+  --gray-700: 58 52 45;    /* pistes, bordures fortes */
+  --gray-600: 94 86 76;
+  --gray-500: 130 120 108;
+  --gray-400: 170 158 144;
+  --gray-300: 200 190 176;
+  --gray-200: 225 216 202;
+  --gray-100: 244 237 225;
+
+  /* accent (les classes "purple" du markup) : ambre */
+  --purple-200: 247 223 178;
+  --purple-300: 241 206 144;
+  --purple-400: 234 184 100;
+  --purple-500: 227 165 62;
+  --purple-600: 213 146 37;
+  --purple-900: 76 53 19;
+
+  /* texte posé sur l'accent (classes "text-white") : encre */
+  --tw-white: 24 20 15;
+
+  --green-200: 187 240 200;
+  --green-300: 140 226 160;
+  --green-400: 110 205 130;
+  --green-500: 72 176 96;
+
+  --red-200: 250 205 200;
+  --red-300: 246 168 160;
+  --red-400: 238 120 106;
+  --red-500: 224 84 68;
+  --red-600: 196 58 43;
+  --red-900: 88 27 20;
+
+  --yellow-300: 244 210 105;
+  --yellow-400: 238 192 68;
+  --yellow-500: 215 166 46;
+
+  --blue-300: 150 196 245;
+  --blue-400: 104 164 235;
+  --blue-500: 66 130 216;
+
+  --amber-300: 250 210 132;
+  --amber-400: 243 188 90;
+  --amber-500: 231 163 54;
+
+  --emerald-400: 78 205 150;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Thème clair « atelier » : papier crème, encre, accent vermillon.
+   L'échelle de gris est inversée : 950 = papier, 100 = encre.
+   ──────────────────────────────────────────────────────────────────────────── */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --gray-950: 242 236 225;
+  --gray-900: 250 246 238;
+  --gray-800: 231 223 207;
+  --gray-700: 211 201 181;
+  --gray-600: 148 138 119;
+  --gray-500: 116 106 89;
+  --gray-400: 88 80 64;
+  --gray-300: 66 60 47;
+  --gray-200: 45 41 31;
+  --gray-100: 27 24 17;
+
+  /* accent : vermillon */
+  --purple-200: 124 34 10;
+  --purple-300: 146 41 12;
+  --purple-400: 170 47 13;
+  --purple-500: 194 55 17;
+  --purple-600: 203 58 17;
+  --purple-900: 241 198 180;
+
+  /* texte posé sur l'accent : papier */
+  --tw-white: 250 246 238;
+
+  --green-200: 20 83 45;
+  --green-300: 21 94 50;
+  --green-400: 21 128 61;
+  --green-500: 22 142 68;
+
+  --red-200: 127 29 29;
+  --red-300: 153 27 27;
+  --red-400: 185 28 28;
+  --red-500: 200 34 34;
+  --red-600: 185 28 28;
+  --red-900: 250 205 190;
+
+  --yellow-300: 133 100 4;
+  --yellow-400: 161 98 7;
+  --yellow-500: 178 109 8;
+
+  --blue-300: 29 78 216;
+  --blue-400: 30 64 175;
+  --blue-500: 37 99 235;
+
+  --amber-300: 146 64 14;
+  --amber-400: 154 72 16;
+  --amber-500: 171 84 18;
+
+  --emerald-400: 4 120 87;
 }
 
 * {
@@ -24,20 +121,35 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: 'Space Grotesk', system-ui, 'Segoe UI', sans-serif;
+  background-color: rgb(var(--gray-950));
+  color: rgb(var(--gray-100));
+}
+
+/* Les chiffres alignés comptent dans une app d'outillage. */
+.font-mono,
+input[type='number'] {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: rgb(var(--purple-600) / 0.35);
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: rgb(var(--gray-950));
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 3px;
+  background: rgb(var(--gray-700));
+  border-radius: 0;
+  border: 2px solid rgb(var(--gray-950));
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--gray-600));
 }
 
 .animate-pulse-subtle {

@@ -18,7 +18,7 @@ class GenerationWorker:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def run(self) -> None:
-        self._loop = asyncio.get_event_loop()
+        self._loop = asyncio.get_running_loop()
         logger.info("Generation worker started")
         while True:
             job = await self._queue.get()
@@ -30,6 +30,59 @@ class GenerationWorker:
                 logger.exception(f"Worker error on job {job.get('id')}: {exc}")
             finally:
                 self._queue.task_done()
+
+    async def _upscale_images(self, job, images, generator, step_callback, step_data):
+        """Refine images at a higher resolution (hires-fix second pass)."""
+        job_id = job["id"]
+        factor = float(job.get("upscale_factor") or 2.0)
+        strength = float(job.get("upscale_strength") or 0.35)
+        # Stay on the pipeline's 8px grid and within the request size cap.
+        target_w = min(2048, int(job["width"] * factor) // 8 * 8)
+        target_h = min(2048, int(job["height"] * factor) // 8 * 8)
+
+        logger.info(
+            f"Upscale hires-fix: {job['width']}x{job['height']} -> {target_w}x{target_h}"
+            f" (strength={strength})"
+        )
+        up_pipe = await pipeline_manager.get_pipeline(
+            job["model_id"], job["repo_id"], mode="img2img"
+        )
+        if job.get("sampler"):
+            apply_sampler(up_pipe, job["sampler"])
+
+        # The refinement pass only runs steps × strength of the schedule.
+        refine_steps = job["steps"]
+        step_data["total"] = max(1, int(round(refine_steps * strength)))
+
+        upscaled = []
+        for i, img in enumerate(images):
+            await ws_manager.send(job_id, {
+                "type": "upscaling",
+                "current": i + 1,
+                "total": len(images),
+                "target_width": target_w,
+                "target_height": target_h,
+            })
+            from PIL import Image as PILImage
+
+            resized = img.resize((target_w, target_h), PILImage.LANCZOS)
+            kwargs = dict(
+                prompt=job["prompt"],
+                image=resized,
+                strength=strength,
+                num_inference_steps=refine_steps,
+                generator=generator,
+                guidance_scale=job.get("cfg_scale", 7.5),
+                callback_on_step_end=step_callback,
+                callback_on_step_end_tensor_inputs=["latents"],
+            )
+            if job.get("negative_prompt"):
+                kwargs["negative_prompt"] = job["negative_prompt"]
+            result = await asyncio.get_running_loop().run_in_executor(
+                None, lambda kw=kwargs: up_pipe(**kw)
+            )
+            upscaled.extend(result.images)
+        return upscaled
 
     async def _process(self, job: dict) -> None:
         job_id = job["id"]
@@ -54,9 +107,14 @@ class GenerationWorker:
         start_ms = int(time.time() * 1000)
         output_paths = []
         error_msg = None
+        pipe = None
+        mode = job.get("mode", "txt2img")
+        seed = job["seed"]
 
         try:
-            pipe = await pipeline_manager.get_pipeline(model_id, repo_id)
+            pipe = await pipeline_manager.get_pipeline(
+                model_id, repo_id, mode=mode, controlnet_repo=job.get("controlnet_repo")
+            )
             if job.get("sampler"):
                 apply_sampler(pipe, job["sampler"])
             lora = job.get("lora")
@@ -66,8 +124,13 @@ class GenerationWorker:
                     logger.info(f"Loaded LoRA {lora}")
                 except Exception as exc:
                     logger.warning(f"Could not load LoRA {lora}: {exc}")
-            loop = self._loop
-            step_data = {"current": 0}
+            loop = self._loop or asyncio.get_running_loop()
+            # img2img only runs the tail of the schedule (steps × strength).
+            # "total" is mutable: the hires-fix pass rewrites it for phase 2.
+            total_steps = job["steps"]
+            if mode == "img2img":
+                total_steps = max(1, int(round(total_steps * (job.get("strength") or 0.8))))
+            step_data = {"current": 0, "total": total_steps}
 
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 step_data["current"] = step_index + 1
@@ -78,6 +141,9 @@ class GenerationWorker:
                     try:
                         import torch
                         with torch.no_grad():
+                            # The VAE may be upcast to fp32 (SDXL black-image fix)
+                            # while latents are fp16 — match dtypes before decoding.
+                            latents = latents.to(pipeline.vae.dtype)
                             decoded = pipeline.vae.decode(
                                 latents / pipeline.vae.config.scaling_factor, return_dict=False
                             )[0]
@@ -95,16 +161,15 @@ class GenerationWorker:
                     ws_manager.send(job_id, {
                         "type": "step",
                         "step": step_data["current"],
-                        "total_steps": job["steps"],
+                        "total_steps": step_data["total"],
                         "preview": preview_b64,
                     }),
                     loop,
                 )
                 return callback_kwargs
 
-            seed = job["seed"]
             if seed == -1:
-                seed = random.randint(0, 2**32 - 1)
+                seed = random.randint(0, 2**31 - 1)
 
             import torch
             generator = torch.Generator(device="cuda" if torch.cuda.is_available() else "cpu")
@@ -114,21 +179,52 @@ class GenerationWorker:
                 prompt=job["prompt"],
                 num_inference_steps=job["steps"],
                 generator=generator,
-                width=job["width"],
-                height=job["height"],
                 num_images_per_prompt=job.get("num_images", 1),
                 callback_on_step_end=step_callback,
                 callback_on_step_end_tensor_inputs=["latents"],
             )
             if job.get("negative_prompt"):
                 generate_kwargs["negative_prompt"] = job["negative_prompt"]
-            if job.get("cfg_scale", 7.5) > 0:
-                generate_kwargs["guidance_scale"] = job["cfg_scale"]
+            # Always pass guidance_scale, including 0: turbo models (SDXL-Turbo,
+            # FLUX schnell) require CFG=0, and omitting it would fall back to the
+            # pipeline default (e.g. 5.0) — degraded output and 2x slower.
+            generate_kwargs["guidance_scale"] = job.get("cfg_scale", 7.5)
 
-            result = await asyncio.get_event_loop().run_in_executor(
+            size = (job["width"], job["height"])
+            if mode == "img2img":
+                # img2img pipelines derive the output size from the input
+                # image, so resize it instead of passing width/height.
+                from PIL import Image as PILImage
+
+                init_img = PILImage.open(job["init_image_path"]).convert("RGB").resize(size)
+                generate_kwargs["image"] = init_img
+                generate_kwargs["strength"] = job.get("strength") or 0.8
+            elif mode == "controlnet":
+                from PIL import Image as PILImage
+
+                from services.image_gen.modes import prepare_control_image
+
+                control_img = (
+                    PILImage.open(job["control_image_path"]).convert("RGB").resize(size)
+                )
+                generate_kwargs["image"] = prepare_control_image(
+                    control_img, job.get("controlnet_type") or "", job.get("preprocess", True)
+                )
+                generate_kwargs["width"], generate_kwargs["height"] = size
+            else:
+                generate_kwargs["width"], generate_kwargs["height"] = size
+
+            result = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: pipe(**generate_kwargs)
             )
             images = result.images
+
+            # Hires-fix: upscale each image then refine it with an img2img
+            # pass on the same model (shared weights — no extra VRAM).
+            if job.get("upscale") and mode == "txt2img":
+                images = await self._upscale_images(
+                    job, images, generator, step_callback, step_data
+                )
 
             settings.images_dir.mkdir(parents=True, exist_ok=True)
             for i, img in enumerate(images):
@@ -142,8 +238,8 @@ class GenerationWorker:
             logger.exception(f"Generation failed for job {job_id}")
         finally:
             # Pipelines are cached/reused — remove any LoRA so it doesn't leak
-            # into the next job.
-            if job.get("lora"):
+            # into the next job. (pipe stays None if loading itself failed.)
+            if job.get("lora") and pipe is not None:
                 try:
                     pipe.unload_lora_weights()
                 except Exception:
@@ -152,7 +248,8 @@ class GenerationWorker:
         duration_ms = int(time.time() * 1000) - start_ms
         status = "completed" if not error_msg else "failed"
 
-        # Produce base64 previews of final images
+        # Produce base64 previews of final images (skip unreadable files — a
+        # null entry would render as a broken <img> in the frontend).
         image_b64s = []
         for p in output_paths:
             try:
@@ -160,7 +257,7 @@ class GenerationWorker:
                 img = PILImage.open(p)
                 image_b64s.append(image_to_data_url(img, "PNG"))
             except Exception:
-                image_b64s.append(None)
+                logger.warning(f"Could not read generated image {p}")
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(ImageJob).where(ImageJob.id == job_id))

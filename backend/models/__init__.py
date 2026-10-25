@@ -2,6 +2,7 @@ from .agent_session import AgentSession
 from .dataset import Dataset
 from .diffusion_model import DiffusionModel
 from .image_job import ImageJob
+from .tokenizer_model import TokenizerModel
 from .training_run import TrainingRun
 
-__all__ = ["ImageJob", "AgentSession", "TrainingRun", "Dataset", "DiffusionModel"]
+__all__ = ["ImageJob", "AgentSession", "TrainingRun", "Dataset", "DiffusionModel", "TokenizerModel"]

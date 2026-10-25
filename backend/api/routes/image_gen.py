@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 import shutil
 import uuid
@@ -20,8 +21,21 @@ from services.image_gen.model_registry import (
     get_compatible_models,
     resolve_model,
 )
+from services.image_gen.modes import (
+    CONTROLNET_TYPES,
+    SUPPORTED_MODES,
+    controlnet_repo_for,
+    decode_image_payload,
+    detect_family,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/image", tags=["image-generation"])
+
+# Keep strong references to fire-and-forget download tasks: asyncio only holds
+# weak refs, so an unreferenced task can be garbage-collected mid-download.
+_background_tasks: set = set()
 
 
 class GenerateRequest(BaseModel):
@@ -32,11 +46,28 @@ class GenerateRequest(BaseModel):
     height: int = Field(512, ge=64, le=2048)
     steps: int = Field(20, ge=1, le=150)
     cfg_scale: float = Field(7.5, ge=0.0, le=30.0)
-    seed: int = Field(-1)
+    # -1 = random; the upper bound keeps the value within the DB Integer
+    # column and torch.Generator.manual_seed range.
+    seed: int = Field(-1, ge=-1, le=2**31 - 1)
     sampler: str = "DPM++ 2M"
     num_images: int = Field(1, ge=1, le=4)
     # Optional LoRA adapter (HF repo id), applied on top of the base model.
     lora: Optional[str] = None
+    # Generation mode. img2img needs init_image (+ strength); controlnet needs
+    # control_image + controlnet_type. Images are base64 `data:` URLs.
+    mode: str = "txt2img"
+    init_image: Optional[str] = None
+    strength: float = Field(0.8, ge=0.05, le=1.0)
+    controlnet_type: Optional[str] = None
+    control_image: Optional[str] = None
+    # canny control images are preprocessed server-side unless disabled
+    # (depth/pose always expect a ready-made control map).
+    preprocess: bool = True
+    # Hires-fix upscale: generate at width×height then refine with an img2img
+    # pass at ×upscale_factor (txt2img only). Low strength = faithful upscale.
+    upscale: bool = False
+    upscale_factor: float = Field(2.0, ge=1.25, le=4.0)
+    upscale_strength: float = Field(0.35, ge=0.05, le=0.9)
 
 
 class HFModelDownloadRequest(BaseModel):
@@ -111,6 +142,53 @@ async def list_models(db: AsyncSession = Depends(get_db)):
     return models
 
 
+def _save_input_image(data: str, job_id: str, suffix: str) -> str:
+    """Decode + persist an input image; returns its path on disk."""
+    from core.config import settings
+
+    img = decode_image_payload(data)  # raises ValueError on bad input
+    inputs_dir = settings.images_dir / "inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    fpath = inputs_dir / f"{job_id}_{suffix}.png"
+    img.save(str(fpath))
+    return str(fpath)
+
+
+def _validate_mode(req: GenerateRequest, resolved) -> Optional[str]:
+    """Validate mode-specific inputs; returns the ControlNet repo if needed.
+
+    Raises HTTPException(400) with a user-facing message on invalid combos.
+    """
+    if req.mode not in SUPPORTED_MODES:
+        raise HTTPException(status_code=400, detail=f"Mode inconnu : '{req.mode}'")
+
+    if req.mode == "img2img" and not req.init_image:
+        raise HTTPException(
+            status_code=400, detail="Le mode img2img nécessite une image source (init_image)"
+        )
+
+    if req.mode != "controlnet":
+        return None
+
+    if not req.control_image:
+        raise HTTPException(
+            status_code=400, detail="Le mode ControlNet nécessite une image de contrôle"
+        )
+    if req.controlnet_type not in CONTROLNET_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Type ControlNet invalide (attendu : {', '.join(CONTROLNET_TYPES)})",
+        )
+    family = detect_family(resolved.pipeline_class, resolved.repo_id)
+    cn_repo = controlnet_repo_for(family, req.controlnet_type)
+    if cn_repo is None:
+        raise HTTPException(
+            status_code=400,
+            detail="ControlNet n'est disponible que pour les modèles SD 1.5 et SDXL",
+        )
+    return cn_repo
+
+
 @router.post("/generate")
 async def generate(req: GenerateRequest, request: Request, db: AsyncSession = Depends(get_db)):
     resolved = await resolve_model(req.model_id, db)
@@ -127,8 +205,26 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
             )
         raise HTTPException(status_code=404, detail=f"Model '{req.model_id}' not found")
 
+    cn_repo = _validate_mode(req, resolved)
+
+    if req.upscale and req.mode != "txt2img":
+        raise HTTPException(
+            status_code=400, detail="L'upscale n'est disponible qu'en mode Texte → Image"
+        )
+
     job_id = str(uuid.uuid4())
-    seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 32 - 1)
+    seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 31 - 1)
+
+    init_image_path = None
+    control_image_path = None
+    try:
+        # _validate_mode already guaranteed these images are present.
+        if req.mode == "img2img" and req.init_image:
+            init_image_path = _save_input_image(req.init_image, job_id, "init")
+        elif req.mode == "controlnet" and req.control_image:
+            control_image_path = _save_input_image(req.control_image, job_id, "control")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
     db_job = ImageJob(
         id=job_id,
@@ -143,6 +239,13 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         seed=seed,
         sampler=req.sampler,
         num_images=req.num_images,
+        mode=req.mode,
+        strength=req.strength if req.mode == "img2img" else None,
+        controlnet_type=req.controlnet_type if req.mode == "controlnet" else None,
+        init_image_path=init_image_path,
+        control_image_path=control_image_path,
+        upscale_factor=req.upscale_factor if req.upscale else None,
+        upscale_strength=req.upscale_strength if req.upscale else None,
     )
     db.add(db_job)
     await db.commit()
@@ -162,6 +265,16 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "num_images": req.num_images,
         "sampler": req.sampler,
         "lora": req.lora,
+        "mode": req.mode,
+        "strength": req.strength,
+        "init_image_path": init_image_path,
+        "control_image_path": control_image_path,
+        "controlnet_type": req.controlnet_type,
+        "controlnet_repo": cn_repo,
+        "preprocess": req.preprocess,
+        "upscale": req.upscale,
+        "upscale_factor": req.upscale_factor,
+        "upscale_strength": req.upscale_strength,
     }
     await generation_queue.put(queue_job)
 
@@ -174,6 +287,52 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
     }
 
 
+# ── Manual pipeline management (load / unload from the UI) ─────────────────────
+
+@router.get("/pipelines")
+async def loaded_pipelines():
+    from services.image_gen.pipeline_manager import pipeline_manager
+
+    return {"loaded": await pipeline_manager.loaded_ids()}
+
+
+@router.post("/models/{model_id}/load")
+async def load_model(model_id: str, db: AsyncSession = Depends(get_db)):
+    """Preload a model into VRAM (downloads it first if needed).
+
+    Loading takes seconds to minutes — it runs in the background; poll
+    GET /image/pipelines (or watch the Console) to see when it lands.
+    """
+    from services.image_gen.pipeline_manager import pipeline_manager
+
+    resolved = await resolve_model(model_id, db)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    if model_id in await pipeline_manager.loaded_ids():
+        return {"status": "loaded"}
+
+    async def _load():
+        try:
+            await pipeline_manager.get_pipeline(model_id, resolved.repo_id)
+            logger.info(f"Modèle {model_id} chargé (demande manuelle)")
+        except Exception:
+            logger.exception(f"Échec du chargement manuel du modèle {model_id}")
+
+    task = asyncio.create_task(_load())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"status": "loading"}
+
+
+@router.post("/models/{model_id}/unload")
+async def unload_model(model_id: str):
+    from services.image_gen.pipeline_manager import pipeline_manager
+
+    count = await pipeline_manager.unload(model_id)
+    return {"status": "unloaded" if count else "not_loaded"}
+
+
 # ── Hugging Face connector ──────────────────────────────────────────────────────
 
 @router.get("/hf/search")
@@ -181,9 +340,15 @@ async def hf_search(query: str, limit: int = 25):
     query = (query or "").strip()
     if not query:
         return {"results": []}
-    results = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: search_hf_models(query, limit)
-    )
+    try:
+        results = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: search_hf_models(query, limit)
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Recherche Hugging Face indisponible : {exc}",
+        ) from None
     return {"results": results}
 
 
@@ -211,7 +376,9 @@ async def hf_download(req: HFModelDownloadRequest, db: AsyncSession = Depends(ge
     db.add(model)
     await db.commit()
 
-    asyncio.create_task(download_hf_model(db_id, repo_id, AsyncSessionLocal))
+    task = asyncio.create_task(download_hf_model(db_id, repo_id, AsyncSessionLocal))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return {"id": db_id, "status": "downloading"}
 
 
@@ -235,11 +402,16 @@ async def hf_model_delete(model_id: str, db: AsyncSession = Depends(get_db)):
     if rec is None:
         raise HTTPException(status_code=404, detail="Model not found")
 
-    if rec.local_path:
-        try:
-            shutil.rmtree(Path(rec.local_path), ignore_errors=True)
-        except Exception:
-            pass
+    # local_path points at a snapshot inside the HF cache; removing the whole
+    # repo cache folder also frees the blobs the snapshot links to.
+    from services.image_gen.hf_connector import repo_cache_path
+
+    for path in (repo_cache_path(rec.repo_id), Path(rec.local_path) if rec.local_path else None):
+        if path is not None:
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+            except Exception:
+                pass
 
     await db.delete(rec)
     await db.commit()
@@ -287,6 +459,7 @@ async def list_jobs(
             "job_id": j.id,
             "status": j.status,
             "model_id": j.model_id,
+            "mode": j.mode,
             "prompt": j.prompt[:100],
             "width": j.width,
             "height": j.height,
@@ -301,6 +474,31 @@ async def list_jobs(
     ]
 
 
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a generation and its image files from disk."""
+    result = await db.execute(select(ImageJob).where(ImageJob.id == job_id))
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("queued", "running"):
+        raise HTTPException(
+            status_code=409, detail="Génération en cours — attends la fin avant de supprimer"
+        )
+
+    paths = list(job.output_paths or []) + [job.init_image_path, job.control_image_path]
+    for p in paths:
+        if p:
+            try:
+                Path(p).unlink(missing_ok=True)
+            except OSError:
+                logger.warning(f"Impossible de supprimer le fichier {p}")
+
+    await db.delete(job)
+    await db.commit()
+    return {"deleted": job_id}
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(ImageJob).where(ImageJob.id == job_id))
@@ -312,6 +510,11 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "job_id": job.id,
         "status": job.status,
         "model_id": job.model_id,
+        "mode": job.mode,
+        "strength": job.strength,
+        "upscale_factor": job.upscale_factor,
+        "upscale_strength": job.upscale_strength,
+        "controlnet_type": job.controlnet_type,
         "prompt": job.prompt,
         "negative_prompt": job.negative_prompt,
         "width": job.width,

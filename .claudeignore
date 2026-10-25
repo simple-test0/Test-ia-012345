@@ -1,0 +1,21 @@
+# Dependencies — never useful for code tasks
+frontend/node_modules/
+backend/.venv/
+
+# Build outputs
+frontend/dist/
+frontend/.vite/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Runtime data (images, downloaded models, datasets, DB)
+data/
+
+# Logs
+**/*.log
+**/*.log.*
+
+# Compiled migrations (auto-generated, rarely need to read)
+backend/migrations/versions/__pycache__/

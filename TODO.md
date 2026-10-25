@@ -17,7 +17,7 @@
 - [x] **LoRA** : adaptateur optionnel appliqué au pipeline (déchargé après chaque job).
 
 ### Qualité / Optimisation
-- [x] README, tests pytest (24, sans torch) + marqueur `heavy` pour l'e2e, CI GitHub Actions.
+- [x] README, suite pytest exécutable sans torch + marqueur `heavy` pour l'e2e, CI GitHub Actions.
 - [x] Dockerfile backend & frontend + docker-compose (+ Ollama, proxy nginx).
 - [x] `start.sh` mode prod + warning Ollama.
 - [x] **Migrations DB via Alembic** (migration initiale générée + vérifiée) en plus de
@@ -28,8 +28,26 @@
 - [x] Esthétique : système de **toasts** global, couleurs de focus unifiées (violet),
       champ LoRA dans l'UI.
 - [x] Remplacement des `except: pass` muets par des logs debug.
+- [x] Génération **img2img** : upload d'image source + slider strength, pipeline
+      `AutoPipelineForImage2Image` (réutilise les poids du pipeline chargé via `from_pipe`).
+- [x] **ControlNet** (canny/depth/pose) pour SD 1.5 et SDXL : upload d'image de contrôle,
+      pré-traitement canny local (PIL, sans cv2) ; depth/pose attendent une carte déjà calculée.
+- [x] **Stabilisation (audit complet)** : SQLite en WAL + busy_timeout (plus de
+      « database is locked » entre worker/WS/téléchargements) ; récupération au démarrage
+      étendue aux TrainingRun/Dataset/DiffusionModel bloqués ; upload de dataset lu avant la
+      réponse (les UploadFile sont fermés par Starlette à la fin de la requête) + noms de
+      fichiers assainis + statut `error` en cas d'échec ; références fortes sur toutes les
+      tâches de fond de labs ; run marqué `failed` si le subprocess d'entraînement meurt sans
+      événement terminal + cleanup des ressources ; `stop()` et outils agent synchrones
+      exécutés hors event loop (plus de gel de l'app) ; transaction DB fermée pendant le run
+      de l'agent ; suppression disque des datasets ; borne du seed ; `wss://` sous HTTPS ;
+      historique de session agent rechargé + suppression de session ; export ONNX dans l'UI.
+- [x] **Stabilisation** : récupération des jobs orphelins au démarrage (queue en mémoire),
+      correction du `NameError` masquant l'erreur réelle quand le chargement du pipeline échoue,
+      référence forte sur les tâches de téléchargement HF (risque de GC en plein download),
+      gestion des événements WS `started`/`error` côté front (jobs qui restaient « queued »/
+      « running » pour toujours), messages d'erreur backend affichés dans l'UI.
 
 ## ⏭️ Restant (nécessite un GPU pour être validé)
-- [ ] Génération **img2img** (upload d'image source) — back + UI à valider sur GPU.
-- [ ] **ControlNet** (pose/depth/canny) — pipeline + UI dédiés.
+- [ ] Valider img2img + ControlNet sur GPU (le code est en place, testé sans torch).
 - [ ] Tests e2e exécutant réellement torch/diffusers (marqueur `heavy` déjà en place).

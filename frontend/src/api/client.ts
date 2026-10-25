@@ -18,7 +18,9 @@ if (API_TOKEN) {
 
 export default api
 
-export const WS_BASE = `ws://${window.location.host}`
+// Match the page protocol: a page served over HTTPS can only open wss://.
+const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws'
+export const WS_BASE = `${WS_PROTOCOL}://${window.location.host}`
 
 /** Build a WebSocket URL, appending the auth token when configured. */
 export const wsUrl = (path: string): string =>

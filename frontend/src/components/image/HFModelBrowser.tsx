@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Search, Download, Lock, Loader2, X, Heart, ArrowDownToLine } from 'lucide-react'
+import { Search, Download, Lock, Loader2, X, Heart, ArrowDownToLine, Cpu, HardDrive } from 'lucide-react'
 import { searchHFModels, downloadHFModel } from '../../api/image'
 import { toast } from '../ui/toast'
 
@@ -11,6 +11,8 @@ interface HFResult {
   gated: boolean
   pipeline_tag: string | null
   tags: string[]
+  params: number
+  size_bytes: number
 }
 
 interface HFModelBrowserProps {
@@ -23,6 +25,18 @@ function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
   return String(n)
+}
+
+function formatParams(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`
+  return String(n)
+}
+
+function formatSize(bytes: number): string {
+  const gb = bytes / 1_000_000_000
+  if (gb >= 1) return `~${gb.toFixed(1)} GB`
+  return `~${Math.max(1, Math.round(bytes / 1_000_000))} MB`
 }
 
 export default function HFModelBrowser({ open, onClose, onDownloadStarted }: HFModelBrowserProps) {
@@ -139,6 +153,16 @@ export default function HFModelBrowser({ open, onClose, onDownloadStarted }: HFM
                       <span className="flex items-center gap-1">
                         <Heart className="h-3 w-3" /> {formatCount(r.likes)}
                       </span>
+                      {r.params > 0 && (
+                        <span className="flex items-center gap-1" title="Nombre de paramètres">
+                          <Cpu className="h-3 w-3" /> {formatParams(r.params)}
+                        </span>
+                      )}
+                      {r.size_bytes > 0 && (
+                        <span className="flex items-center gap-1" title="Taille estimée du téléchargement (fp16)">
+                          <HardDrive className="h-3 w-3" /> {formatSize(r.size_bytes)}
+                        </span>
+                      )}
                       {r.pipeline_tag && (
                         <span className="rounded-full bg-purple-500/15 px-1.5 py-0.5 text-purple-300">
                           {r.pipeline_tag}

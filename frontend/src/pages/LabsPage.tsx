@@ -1,4 +1,13 @@
 import { useEffect, useState } from 'react'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { Loader2, Play, Pause, Square, Download, FlaskConical, Database, Cpu } from 'lucide-react'
 import {
   getArchitectures,
@@ -9,6 +18,8 @@ import {
   pauseRun,
   resumeRun,
   stopRun,
+  exportRun,
+  downloadExport,
 } from '../api/labs'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { wsUrl } from '../api/client'
@@ -50,40 +61,178 @@ const STATUS_COLORS: Record<string, string> = {
   failed: 'bg-red-500/20 text-red-300 border border-red-500/40',
 }
 
-// ─── Live metrics for a running run ──────────────────────────────────────────
+// ─── Live metrics chart for a running run ────────────────────────────────────
+
+interface MetricPoint {
+  epoch: number
+  train_loss?: number
+  val_loss?: number
+  val_acc?: number
+}
+
+// Recharts writes SVG attributes, where CSS var() isn't supported — resolve
+// the theme variables to concrete colors at render time instead.
+const cssColor = (name: string) =>
+  `rgb(${getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace(/ +/g, ',')})`
+
+function useChartTheme() {
+  return {
+    grid: cssColor('--gray-800'),
+    axis: cssColor('--gray-700'),
+    tick: cssColor('--gray-500'),
+    train: cssColor('--purple-400'),
+    val: cssColor('--blue-400'),
+    acc: cssColor('--emerald-400'),
+    tooltip: {
+      contentStyle: {
+        backgroundColor: cssColor('--gray-900'),
+        border: `1px solid ${cssColor('--gray-700')}`,
+        borderRadius: 4,
+        fontSize: 11,
+        padding: '4px 8px',
+      },
+      labelStyle: { color: cssColor('--gray-400') },
+      itemStyle: { color: cssColor('--gray-200') },
+    },
+  }
+}
 
 function RunMetrics({ runId }: { runId: string }) {
-  const [latest, setLatest] = useState<Record<string, number> | null>(null)
+  const [history, setHistory] = useState<MetricPoint[]>([])
+  const [batchLoss, setBatchLoss] = useState<number | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
+  const chart = useChartTheme()
 
   useWebSocket(wsUrl(`/ws/training/${runId}`), {
     onMessage: (raw) => {
       const evt = raw as { type: string; message?: string } & Record<string, number>
-      if (evt.type === 'epoch_metric' || evt.type === 'batch_metric') {
-        setLatest(evt)
+      if (evt.type === 'epoch_metric') {
+        const point: MetricPoint = { epoch: evt.epoch }
+        if (evt.train_loss !== undefined) point.train_loss = +evt.train_loss.toFixed(4)
+        if (evt.val_loss !== undefined) point.val_loss = +evt.val_loss.toFixed(4)
+        if (evt.val_acc !== undefined) point.val_acc = +evt.val_acc.toFixed(4)
+        setHistory((prev) => {
+          const idx = prev.findIndex((p) => p.epoch === point.epoch)
+          if (idx >= 0) {
+            const next = [...prev]
+            next[idx] = point
+            return next
+          }
+          return [...prev, point]
+        })
+      } else if (evt.type === 'batch_metric' && evt.loss !== undefined) {
+        setBatchLoss(+evt.loss.toFixed(4))
       } else if (evt.type === 'warning' && evt.message) {
         setWarning(evt.message)
       }
     },
   })
 
+  const hasLoss = history.some((p) => p.train_loss !== undefined || p.val_loss !== undefined)
+  const hasAcc = history.some((p) => p.val_acc !== undefined)
+
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
       {warning && (
         <p className="rounded bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-[10px] text-amber-300">
           ⚠ {warning}
         </p>
       )}
-      {latest ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400">
-          {latest.epoch !== undefined && <span>epoch {latest.epoch}</span>}
-          {latest.train_loss !== undefined && <span>train_loss {latest.train_loss}</span>}
-          {latest.val_loss !== undefined && <span>val_loss {latest.val_loss}</span>}
-          {latest.val_acc !== undefined && <span>val_acc {latest.val_acc}</span>}
-          {latest.loss !== undefined && <span>loss {latest.loss}</span>}
+
+      {history.length === 0 ? (
+        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+          <span>En attente de métriques…</span>
+          {batchLoss !== null && <span className="text-gray-400">batch loss: {batchLoss}</span>}
         </div>
       ) : (
-        <p className="text-[11px] text-gray-500">En attente de métriques…</p>
+        <div className="flex flex-col gap-3">
+          {batchLoss !== null && (
+            <p className="text-[10px] text-gray-500">batch loss en cours : {batchLoss}</p>
+          )}
+
+          {hasLoss && (
+            <div>
+              <p className="mb-1 text-[10px] text-gray-500">
+                <span className="inline-block w-2 h-0.5 bg-purple-400 mr-1 align-middle" />train loss
+                {hasLoss && history.some(p => p.val_loss !== undefined) && (
+                  <><span className="inline-block w-2 h-0.5 bg-blue-400 mx-1 align-middle" />val loss</>
+                )}
+              </p>
+              <ResponsiveContainer width="100%" height={120}>
+                <LineChart data={history} margin={{ top: 4, right: 6, bottom: 0, left: -22 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+                  <XAxis
+                    dataKey="epoch"
+                    tick={{ fill: chart.tick, fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: chart.axis }}
+                  />
+                  <YAxis
+                    tick={{ fill: chart.tick, fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: chart.axis }}
+                    width={40}
+                  />
+                  <Tooltip {...chart.tooltip} />
+                  <Line
+                    type="monotone"
+                    dataKey="train_loss"
+                    stroke={chart.train}
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="train loss"
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="val_loss"
+                    stroke={chart.val}
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="val loss"
+                    connectNulls
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {hasAcc && (
+            <div>
+              <p className="mb-1 text-[10px] text-gray-500">
+                <span className="inline-block w-2 h-0.5 bg-emerald-400 mr-1 align-middle" />val accuracy
+              </p>
+              <ResponsiveContainer width="100%" height={80}>
+                <LineChart data={history} margin={{ top: 4, right: 6, bottom: 0, left: -22 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+                  <XAxis
+                    dataKey="epoch"
+                    tick={{ fill: chart.tick, fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: chart.axis }}
+                  />
+                  <YAxis
+                    domain={[0, 1]}
+                    tick={{ fill: chart.tick, fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: chart.axis }}
+                    width={40}
+                  />
+                  <Tooltip {...chart.tooltip} />
+                  <Line
+                    type="monotone"
+                    dataKey="val_acc"
+                    stroke={chart.acc}
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="val acc"
+                    connectNulls
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -109,6 +258,9 @@ export default function LabsPage() {
   // HF dataset form
   const [dsName, setDsName] = useState('')
   const [dsHfId, setDsHfId] = useState('')
+
+  // Runs currently being exported (id → true)
+  const [exporting, setExporting] = useState<Record<string, boolean>>({})
 
   const refreshDatasets = () =>
     getDatasets().then(setDatasets).catch(() => {})
@@ -178,6 +330,30 @@ export default function LabsPage() {
       refreshRuns()
     } catch {
       setError('Action impossible')
+    }
+  }
+
+  const handleExport = async (runId: string) => {
+    setExporting((prev) => ({ ...prev, [runId]: true }))
+    setError(null)
+    try {
+      await exportRun(runId, 'onnx')
+      const blob = await downloadExport(runId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `model_${runId}.onnx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail || "Échec de l'export du modèle")
+    } finally {
+      setExporting((prev) => {
+        const next = { ...prev }
+        delete next[runId]
+        return next
+      })
     }
   }
 
@@ -327,6 +503,22 @@ export default function LabsPage() {
                 ) : null}
 
                 {(run.status === 'running' || run.status === 'paused') && <RunMetrics runId={run.id} />}
+
+                {run.status === 'completed' && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleExport(run.id)}
+                      disabled={!!exporting[run.id]}
+                      className="flex items-center gap-1 rounded-lg bg-gray-800 hover:bg-gray-700
+                        disabled:opacity-50 px-2.5 py-1 text-xs text-gray-200"
+                    >
+                      {exporting[run.id]
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Download className="h-3 w-3" />}
+                      Exporter (ONNX)
+                    </button>
+                  </div>
+                )}
 
                 {(run.status === 'running' || run.status === 'paused' || run.status === 'pending') && (
                   <div className="flex gap-2">

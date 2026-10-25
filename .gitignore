@@ -43,9 +43,20 @@ Thumbs.db
 .idea/
 *.swp
 
+# Test / coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 # Logs
 *.log
 logs/
+
+# Scripts Windows (install/start) — artefacts runtime
+.install_ok
+.run/
+backend/requirements.win-*.tmp
 
 # Alembic — migration scripts MUST be tracked; only ignore caches.
 backend/migrations/versions/__pycache__/

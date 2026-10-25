@@ -1,7 +1,12 @@
+import logging
+
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -14,6 +19,17 @@ engine = create_async_engine(
     connect_args={"check_same_thread": False},
 )
 
+
+# WAL lets readers and the single writer coexist; busy_timeout makes a second
+# writer wait instead of failing with "database is locked". Both matter here:
+# the worker, WS handlers and background downloads all write concurrently.
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragmas(dbapi_conn, _record) -> None:
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
+
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -25,6 +41,16 @@ AsyncSessionLocal = async_sessionmaker(
 # tables, so we add any missing ones here for seamless upgrades (SQLite).
 _ADDED_COLUMNS = {
     "diffusion_models": [("total_bytes", "BIGINT DEFAULT 0")],
+    "training_runs": [("tokenizer_id", "VARCHAR(36)")],
+    "image_jobs": [
+        ("mode", "VARCHAR(16) DEFAULT 'txt2img'"),
+        ("strength", "FLOAT"),
+        ("controlnet_type", "VARCHAR(16)"),
+        ("init_image_path", "TEXT"),
+        ("control_image_path", "TEXT"),
+        ("upscale_factor", "FLOAT"),
+        ("upscale_strength", "FLOAT"),
+    ],
 }
 
 
@@ -51,8 +77,14 @@ async def get_db():
         try:
             yield session
             await session.commit()
-        except Exception:
+        except Exception as exc:
             await session.rollback()
+            # HTTPException is normal request control flow (404/422/…), not a DB
+            # failure — don't spam the log with a traceback for it.
+            from starlette.exceptions import HTTPException
+
+            if not isinstance(exc, HTTPException):
+                logger.warning("DB session rolled back due to error", exc_info=True)
             raise
         finally:
             await session.close()

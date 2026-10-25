@@ -10,6 +10,9 @@ A local, all-in-one AI web app: **image generation**, **LLM agents with tools**,
 
 ### 🖼️ Image generation
 - Stable Diffusion 1.5 / SDXL / SDXL-Turbo, plus FLUX.1 and SD 3.5 (gated).
+- **Three modes**: text-to-image, **img2img** (upload a source image + strength slider),
+  and **ControlNet** (canny/depth/pose) for SD 1.5 / SDXL. Canny maps are computed
+  server-side; depth/pose expect a precomputed control map.
 - **Hugging Face connector**: search and download *any* text-to-image model from the UI;
   downloaded models persist and appear under "Téléchargés". Models are never version-pinned
   (always the latest `main`).
@@ -43,6 +46,25 @@ This creates a Python venv, installs deps, and starts:
 - frontend on http://localhost:5173
 
 Run `MODE=prod ./start.sh` to start the backend without auto-reload.
+
+### Windows (NVIDIA RTX)
+
+Sur une machine Windows neuve (rien d'installé), double-cliquez sur :
+
+```bat
+install.bat   :: installe Python 3.11/3.12, Node 20+ et Ollama si besoin (winget, avec repli sur
+              :: téléchargement direct), crée le venv, installe les deps backend (torch CUDA 12.1,
+              :: ou CPU si pas de GPU NVIDIA) + frontend, crée .env, et télécharge le modèle
+              :: Ollama par défaut (llama3.2) pour l'onglet Agent
+start.bat     :: démarre le backend (http://localhost:8000) et le frontend (http://localhost:5173),
+              :: relance install.bat tout seul s'il manque quelque chose, et redémarre
+              :: automatiquement les serveurs en cas de crash
+```
+
+`install.bat` est entièrement autonome : il réessaie chaque étape, met à jour le PATH tout seul
+(pas besoin de fermer/rouvrir le terminal) et peut être relancé à volonté — il reprend là où il
+s'est arrêté. Le détail de chaque exécution est journalisé dans `install.log`.
+En pratique, double-cliquer sur `start.bat` suffit : il installe ce qui manque puis démarre tout.
 
 ### Manual
 

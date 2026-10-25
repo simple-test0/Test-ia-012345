@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getHardwareInfo, getRecommendations } from '../api/hardware'
 
-export function useHardwareInfo(pollInterval = 5000) {
+export function useHardwareInfo(pollInterval = 10000) {
   const [hardware, setHardware] = useState<Record<string, unknown> | null>(null)
   const [recommendations, setRecommendations] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(true)
@@ -9,9 +9,7 @@ export function useHardwareInfo(pollInterval = 5000) {
 
   const refresh = async () => {
     try {
-      const [hw, rec] = await Promise.all([getHardwareInfo(), getRecommendations()])
-      setHardware(hw)
-      setRecommendations(rec)
+      setHardware(await getHardwareInfo())
     } catch {
       // backend not ready yet
     } finally {
@@ -20,11 +18,16 @@ export function useHardwareInfo(pollInterval = 5000) {
   }
 
   useEffect(() => {
+    // Recommendations depend only on total VRAM — fetch once, don't poll.
+    getRecommendations()
+      .then(setRecommendations)
+      .catch(() => {})
     refresh()
     timerRef.current = setInterval(refresh, pollInterval)
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollInterval])
 
   return { hardware, recommendations, loading, refresh }
