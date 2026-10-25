@@ -11,8 +11,8 @@
     <string name="fit_view">Voir toute la carte</string>
     <string name="export">Exporter l\'image…</string>
     <string name="pdf_page">Page du PDF…</string>
-    <string name="mode_map">Déplacer carte</string>
-    <string name="mode_trace">Ajuster trace</string>
+    <string name="mode_map">Déplacer</string>
+    <string name="mode_trace">Ajuster</string>
     <string name="mode_calib">Calage</string>
     <string name="undo">Annuler</string>
     <string name="done">Terminé</string>

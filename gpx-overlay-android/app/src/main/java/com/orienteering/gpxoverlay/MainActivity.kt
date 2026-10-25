@@ -3,8 +3,10 @@ package com.orienteering.gpxoverlay
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.content.res.ColorStateList
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
@@ -189,6 +191,7 @@ class MainActivity : Activity(), OverlayView.Listener {
                     if (old != null && old !== m.bitmap) old.recycle()
                     invalidateOptionsMenu()
                     refreshUi()
+                    saveSession()
                     if (refitTrace && overlay.track != null && savedMatrix == null) {
                         toast("Trace placée au centre. Calez-la avec « Ajuster trace » ou « Calage ».")
                     }
@@ -220,6 +223,7 @@ class MainActivity : Activity(), OverlayView.Listener {
                     else if (overlay.mapBitmap != null && mapIsPdf) applyKnownScale(quiet = true)
                     if (overlay.mode == OverlayView.Mode.CALIBRATE) overlay.mode = OverlayView.Mode.MAP
                     refreshUi()
+                    saveSession()
                 }
             } catch (e: Throwable) {
                 runOnUiThread { busy(false); toast(e.message ?: "GPX illisible") }
@@ -352,11 +356,11 @@ class MainActivity : Activity(), OverlayView.Listener {
         btnCalib.visibility = if (calib) View.GONE else View.VISIBLE
         btnUndo.visibility = if (calib) View.VISIBLE else View.GONE
         btnDone.visibility = if (calib) View.VISIBLE else View.GONE
-        val sel = ColorStateList.valueOf(getColor(R.color.mode_selected))
-        for ((b, m) in listOf(btnMap to OverlayView.Mode.MAP, btnTrace to OverlayView.Mode.TRACE)) {
-            b.setTextColor(if (m == mode) 0xFFFFFFFF.toInt() else 0xFF333333.toInt())
-            b.backgroundTintList = if (m == mode) sel else null
-        }
+        styleButton(btnMap, mode == OverlayView.Mode.MAP)
+        styleButton(btnTrace, mode == OverlayView.Mode.TRACE)
+        styleButton(btnCalib, false)
+        styleButton(btnUndo, false)
+        styleButton(btnDone, true)
 
         val t = overlay.track
         stats.text = if (t == null) "Aucune trace" else buildString {
@@ -379,6 +383,18 @@ class MainActivity : Activity(), OverlayView.Listener {
                 "$step · $n point(s)" + if (n < 2) " — 2 minimum pour caler" else ""
             }
         }
+    }
+
+    /** Bouton sélectionné : fond plein magenta et texte blanc ; sinon fond transparent. */
+    private fun styleButton(b: Button, selected: Boolean) {
+        val radius = 8 * resources.displayMetrics.density
+        val content = GradientDrawable().apply {
+            setColor(if (selected) getColor(R.color.mode_selected) else 0x00000000)
+            cornerRadius = radius
+        }
+        val mask = GradientDrawable().apply { setColor(0xFFFFFFFF.toInt()); cornerRadius = radius }
+        b.background = RippleDrawable(ColorStateList.valueOf(0x33000000), content, mask)
+        b.setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF333333.toInt())
     }
 
     private fun formatDuration(ms: Long): String {

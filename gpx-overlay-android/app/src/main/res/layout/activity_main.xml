@@ -48,7 +48,8 @@
         android:layout_height="wrap_content"
         android:background="#F2F2F2"
         android:orientation="horizontal"
-        android:paddingHorizontal="4dp">
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="4dp">
 
         <Button
             android:id="@+id/btnMap"
@@ -56,6 +57,9 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:maxLines="1"
+            android:minHeight="48dp"
             android:text="@string/mode_map" />
 
         <Button
@@ -64,6 +68,9 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:maxLines="1"
+            android:minHeight="48dp"
             android:text="@string/mode_trace" />
 
         <Button
@@ -72,6 +79,9 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:maxLines="1"
+            android:minHeight="48dp"
             android:text="@string/mode_calib" />
 
         <Button
@@ -80,6 +90,9 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:maxLines="1"
+            android:minHeight="48dp"
             android:text="@string/undo"
             android:visibility="gone" />
 
@@ -89,6 +102,9 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:layout_marginHorizontal="2dp"
+            android:maxLines="1"
+            android:minHeight="48dp"
             android:text="@string/done"
             android:visibility="gone" />
     </LinearLayout>
