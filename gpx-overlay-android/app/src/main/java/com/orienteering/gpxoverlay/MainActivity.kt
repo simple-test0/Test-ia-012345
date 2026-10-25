@@ -395,7 +395,10 @@ class MainActivity : Activity(), OverlayView.Listener {
     private var pendingTrackName: String? = null
 
     private fun displayName(uri: Uri): String? {
-        if (uri.scheme == "file") return uri.lastPathSegment?.substringAfter('_')
+        if (uri.scheme == "file") return uri.lastPathSegment?.let { n ->
+            // Fichiers importés : « horodatage-n_nom » → « nom ».
+            if (Regex("^\\d+(-\\d+)?_.+").matches(n)) n.substringAfter('_') else n
+        }
         return try {
             contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
                 if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
@@ -472,12 +475,10 @@ class MainActivity : Activity(), OverlayView.Listener {
         dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(10)?.forEach {
             if (it.path !in keep) it.delete()
         }
-        var name = "fichier"
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst() && !c.isNull(0)) name = c.getString(0)
-        }
+        var name = displayName(uri) ?: uri.lastPathSegment ?: "fichier"
         name = name.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(80)
-        val out = File(dir, "${System.currentTimeMillis()}_$name")
+        // Nom unique : plusieurs fichiers peuvent arriver dans la même milliseconde.
+        val out = File(dir, "${System.currentTimeMillis()}-${importCounter.incrementAndGet()}_$name")
         contentResolver.openInputStream(uri)!!.use { input -> out.outputStream().use { input.copyTo(it) } }
         val head = ByteArray(16)
         val n = out.inputStream().use { it.read(head) }
@@ -485,6 +486,8 @@ class MainActivity : Activity(), OverlayView.Listener {
         val isMap = type.startsWith("image/") || type == "application/pdf" || (n >= 4 && looksLikeMap(head))
         return out to isMap
     }
+
+    private val importCounter = java.util.concurrent.atomic.AtomicInteger()
 
     private fun looksLikeMap(h: ByteArray): Boolean {
         fun b(i: Int) = h[i].toInt() and 0xFF
@@ -1038,8 +1041,14 @@ class MainActivity : Activity(), OverlayView.Listener {
         overlay.renderThumbnail(480)?.let { thumb ->
             val f = sessions.thumbFile(id)
             io.execute {
-                try { f.outputStream().use { thumb.compress(Bitmap.CompressFormat.PNG, 90, it) } } catch (_: Exception) { }
+                // Écriture dans un fichier temporaire puis renommage : jamais de miniature à moitié écrite.
+                try {
+                    val tmp = File(f.path + ".tmp")
+                    tmp.outputStream().use { thumb.compress(Bitmap.CompressFormat.PNG, 90, it) }
+                    tmp.renameTo(f)
+                } catch (_: Exception) { }
                 thumb.recycle()
+                runOnUiThread { if (home.visibility == View.VISIBLE) buildHome() }
             }
         }
     }

@@ -306,6 +306,10 @@ class MainActivityTest {
         val overlay = activity.findViewById<OverlayView>(R.id.overlay)
         waitFor { overlay.mapBitmap != null && overlay.track != null }
         assertEquals(241, overlay.track!!.points.size)
+        // Deux fichiers distincts, qui gardent leur nom (même s'ils arrivent dans la même milliseconde).
+        val names = File(activity.filesDir, "imports").listFiles()!!.map { it.name }
+        assertEquals(names.toString(), 2, names.size)
+        assertTrue(names.toString(), names.any { it.endsWith("_trace_test.gpx") } && names.any { it.endsWith("_carte_test.jpg") })
     }
 
     @Test
