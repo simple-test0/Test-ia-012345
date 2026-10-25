@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/open_map" android:title="@string/open_map" android:showAsAction="always|withText" />
+    <item android:id="@+id/open_gpx" android:title="@string/open_gpx" android:showAsAction="always|withText" />
+    <item android:id="@+id/map_scale" android:title="@string/map_scale" />
+    <item android:id="@+id/pdf_page" android:title="@string/pdf_page" />
+    <item android:id="@+id/speed_colors" android:title="@string/speed_colors" android:checkable="true" />
+    <item android:id="@+id/lock_scale" android:title="@string/lock_scale" android:checkable="true" />
+    <item android:id="@+id/trace_width" android:title="@string/trace_width" />
+    <item android:id="@+id/reset_trace" android:title="@string/reset_trace" />
+    <item android:id="@+id/fit_view" android:title="@string/fit_view" />
+    <item android:id="@+id/export" android:title="@string/export" />
+</menu>

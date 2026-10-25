@@ -1,0 +1,41 @@
+name: Android — Trace O (APK)
+
+on:
+  push:
+    paths:
+      - "gpx-overlay-android/**"
+      - ".github/workflows/android-gpx-overlay.yml"
+  pull_request:
+    paths:
+      - "gpx-overlay-android/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gpx-overlay-android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Tests unitaires
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Compilation de l'APK
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Renommer l'APK
+        run: cp app/build/outputs/apk/release/app-release.apk TraceO.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TraceO-apk
+          path: gpx-overlay-android/TraceO.apk
