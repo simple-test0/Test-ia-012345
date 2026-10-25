@@ -83,6 +83,7 @@ class GpxParserTest {
         )
         assertEquals(2, t.points.size)
         assertEquals(300.0, t.points[0].ele!!, 1e-9)
+        assertEquals(150, t.points[0].hr)
         assertEquals(10_000L, t.durationMs)
         assertEquals(100.0, t.distanceM, 1.0)
     }
@@ -102,5 +103,54 @@ class GpxParserTest {
         // Avant le début / après la fin : on reste aux extrémités.
         t.positionAt(0, out); assertEquals(t.local[1], out[1], 0.01f)
         t.positionAt(Long.MAX_VALUE, out); assertEquals(t.local[3], out[1], 0.01f)
+    }
+
+    @Test
+    fun readsGarminGpxExtensions() {
+        val t = parse(
+            """<gpx xmlns="http://www.topografix.com/GPX/1/1"
+                   xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+              <trk><trkseg>
+                <trkpt lat="45.0" lon="5.0"><ele>200</ele><time>2024-05-01T10:00:00Z</time>
+                  <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>140</gpxtpx:hr><gpxtpx:cad>85</gpxtpx:cad></gpxtpx:TrackPointExtension></extensions></trkpt>
+                <trkpt lat="45.0005" lon="5.0"><ele>210</ele><time>2024-05-01T10:00:20Z</time>
+                  <extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>160</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+                <trkpt lat="45.001" lon="5.0"><ele>205</ele><time>2024-05-01T10:00:40Z</time></trkpt>
+                <trkpt lat="45.0015" lon="5.0"><ele>230</ele><time>2024-05-01T10:01:00Z</time></trkpt>
+              </trkseg></trk></gpx>"""
+        )
+        assertEquals(140, t.points[0].hr)
+        assertEquals(160, t.points[1].hr)
+        assertNull(t.points[2].hr)
+        assertTrue(t.hasHr)
+        assertEquals(150.0, t.avgHr!!, 1e-9)
+        assertEquals(160, t.maxHr)
+        // 200 → 210 (+10), 210 → 205 (-5), 205 → 230 (+25)
+        assertEquals(35.0, t.gainM, 1e-6)
+        assertEquals(5.0, t.lossM, 1e-6)
+        assertEquals(150.0, t.avgHrBetween(0, 3)!!, 1e-9)
+        assertEquals(10.0, t.gainBetween(0, 1), 1e-6)
+    }
+
+    @Test
+    fun smallElevationNoiseIsIgnored() {
+        val pts = (0 until 50).map { TrackPoint(45.0 + it * 0.0001, 5.0, 100.0 + (it % 2) * 2.0, null) }
+        val t = Track(null, listOf(pts))
+        assertEquals(0.0, t.gainM, 1e-6)
+    }
+
+    @Test
+    fun readsTrackInsideGarminZip() {
+        val gpx = """<gpx><trk><trkseg>
+              <trkpt lat="45.0" lon="5.0"><time>2024-05-01T10:00:00Z</time></trkpt>
+              <trkpt lat="45.001" lon="5.0"><time>2024-05-01T10:01:00Z</time></trkpt>
+            </trkseg></trk></gpx>""".toByteArray()
+        val bos = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(bos).use { z ->
+            z.putNextEntry(java.util.zip.ZipEntry("lisez-moi.txt")); z.write("x".toByteArray()); z.closeEntry()
+            z.putNextEntry(java.util.zip.ZipEntry("12345_ACTIVITY.gpx")); z.write(gpx); z.closeEntry()
+        }
+        val t = TrackParser.parse(bos.toByteArray().inputStream())
+        assertEquals(2, t.points.size)
     }
 }

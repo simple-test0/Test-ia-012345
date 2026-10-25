@@ -45,6 +45,19 @@ class MainActivity : Activity(), OverlayView.Listener {
     private lateinit var statTime: TextView
     private lateinit var statPace: TextView
     private lateinit var legend: View
+    private lateinit var legendBar: View
+    private lateinit var legendLabel: TextView
+    private lateinit var statGain: TextView
+    private lateinit var statHr: TextView
+    private lateinit var statGainBox: View
+    private lateinit var statHrBox: View
+    private lateinit var btnProfile: Button
+    private lateinit var profileBox: View
+    private lateinit var profile: ProfileView
+    private lateinit var chipPace: TextView
+    private lateinit var chipEle: TextView
+    private lateinit var chipHr: TextView
+    private var showProfile = false
     private lateinit var btnFit: View
     private lateinit var splitsSheet: View
     private lateinit var splitsList: LinearLayout
@@ -108,6 +121,18 @@ class MainActivity : Activity(), OverlayView.Listener {
         statTime = findViewById(R.id.statTime)
         statPace = findViewById(R.id.statPace)
         legend = findViewById(R.id.legend)
+        legendBar = findViewById(R.id.legendBar)
+        legendLabel = findViewById(R.id.legendLabel)
+        statGain = findViewById(R.id.statGain)
+        statHr = findViewById(R.id.statHr)
+        statGainBox = findViewById(R.id.statGainBox)
+        statHrBox = findViewById(R.id.statHrBox)
+        btnProfile = findViewById(R.id.btnProfile)
+        profileBox = findViewById(R.id.profileBox)
+        profile = findViewById(R.id.profile)
+        chipPace = findViewById(R.id.chipPace)
+        chipEle = findViewById(R.id.chipEle)
+        chipHr = findViewById(R.id.chipHr)
         btnFit = findViewById(R.id.btnFit)
         splitsSheet = findViewById(R.id.splitsSheet)
         splitsList = findViewById(R.id.splitsList)
@@ -140,6 +165,16 @@ class MainActivity : Activity(), OverlayView.Listener {
         findViewById<View>(R.id.btnMore).setOnClickListener { showMoreMenu(it) }
         btnFit.setOnClickListener { overlay.fitView(animate = true) }
         findViewById<View>(R.id.btnSplitsClose).setOnClickListener { hideSplits() }
+        legend.setOnClickListener { showColorDialog() }
+        btnProfile.setOnClickListener {
+            showProfile = !showProfile
+            if (!showProfile) overlay.probeIndex = -1
+            refreshUi()
+        }
+        chipPace.setOnClickListener { setMetric(ProfileView.Metric.PACE) }
+        chipEle.setOnClickListener { setMetric(ProfileView.Metric.ELEVATION) }
+        chipHr.setOnClickListener { setMetric(ProfileView.Metric.HEART_RATE) }
+        profile.onPick = { i -> onProfilePick(i) }
         // Les panneaux flottants cachent une partie de la carte : on le signale à la vue.
         root.viewTreeObserver.addOnGlobalLayoutListener { updateInsets() }
 
@@ -188,7 +223,13 @@ class MainActivity : Activity(), OverlayView.Listener {
             override fun onStopTrackingTouch(sb: SeekBar) { userSeeking = false }
         })
 
-        overlay.speedColors = prefs.getBoolean("speedColors", true)
+        overlay.colorMode = runCatching {
+            OverlayView.ColorMode.valueOf(prefs.getString("colorMode", null) ?: "SPEED")
+        }.getOrDefault(OverlayView.ColorMode.SPEED)
+        profile.metric = runCatching {
+            ProfileView.Metric.valueOf(prefs.getString("chartMetric", null) ?: "PACE")
+        }.getOrDefault(ProfileView.Metric.PACE)
+        showProfile = prefs.getBoolean("showProfile", false)
         overlay.lockTraceScale = prefs.getBoolean("lockScale", false)
         overlay.traceWidthDp = prefs.getFloat("traceWidth", 4f)
         overlay.replaySpeed = prefs.getFloat("replaySpeed", 10f).takeIf { v -> speeds.any { it == v } } ?: 10f
@@ -221,7 +262,6 @@ class MainActivity : Activity(), OverlayView.Listener {
     private fun showMoreMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menuInflater.inflate(R.menu.main, popup.menu)
-        popup.menu.findItem(R.id.speed_colors).isChecked = overlay.speedColors
         popup.menu.findItem(R.id.lock_scale).isChecked = overlay.lockTraceScale
         popup.menu.findItem(R.id.pdf_page).isVisible = mapIsPdf && mapPageCount > 1
         popup.setOnMenuItemClickListener { onMenuItem(it) }
@@ -234,11 +274,7 @@ class MainActivity : Activity(), OverlayView.Listener {
             R.id.splits -> showSplits()
             R.id.map_scale -> showScaleDialog()
             R.id.pdf_page -> mapUri?.let { choosePdfPage(it, mapPageCount) }
-            R.id.speed_colors -> {
-                overlay.speedColors = !overlay.speedColors
-                if (overlay.speedColors && overlay.track?.hasTimes == false) toast("Cette trace n'a pas d'horaires.")
-                refreshUi()
-            }
+            R.id.color_mode -> showColorDialog()
             R.id.lock_scale -> {
                 overlay.lockTraceScale = !overlay.lockTraceScale
                 toast(if (overlay.lockTraceScale) "Échelle de la trace verrouillée" else "Échelle de la trace libre")
@@ -273,6 +309,11 @@ class MainActivity : Activity(), OverlayView.Listener {
                     "Glissez un poste pour le déplacer, appui long pour le supprimer.\n\n" +
                     "4. Temps : vos temps intermédiaires. Touchez une section pour la voir sur la carte.\n\n" +
                     "5. Rejouer : revivez la course, à la vitesse de votre choix.\n\n" +
+                    "6. Profil : graphique de l'allure, de l'altitude ou de la fréquence cardiaque. " +
+                    "Touchez-le pour voir le point sur la carte. La couleur de la trace suit le graphique.\n\n" +
+                    "Depuis Garmin : sur connect.garmin.com (navigateur), ouvrez l'activité, roue dentée → " +
+                    "« Exporter le fichier d'origine » (ZIP avec le FIT : FC, altitude, allure) ou « Exporter au format GPX », " +
+                    "puis ouvrez le fichier avec « Trace ». Depuis la montre branchée en USB : dossier GARMIN/Activity, fichiers .fit.\n\n" +
                     "Astuces : double-tap pour zoomer, bouton ⤢ pour revoir toute la carte, " +
                     "« Partager » un fichier vers Trace O depuis une autre app."
             )
@@ -475,6 +516,10 @@ class MainActivity : Activity(), OverlayView.Listener {
                         overlay.mode = OverlayView.Mode.MAP
                     }
                     overlay.setTrack(t, refit = savedMatrix == null)
+                    profile.track = t
+                    profile.cursorIndex = -1
+                    // On choisit d'office ce que la trace contient (FC si disponible, sinon allure…).
+                    if (savedMatrix == null) pickDefaultMetric(t)
                     if (savedMatrix != null) overlay.traceMatrix.setValues(savedMatrix)
                     else if (overlay.mapBitmap != null && mapIsPdf) applyKnownScale(quiet = true)
                     refreshUi()
@@ -577,6 +622,16 @@ class MainActivity : Activity(), OverlayView.Listener {
                     fontFeatureSettings = "tnum"
                     setTextColor(getColor(R.color.muted))
                 })
+                val extra = listOfNotNull(
+                    leg.avgHr?.let { "♥ ${it.toInt()}" },
+                    if (this@MainActivity.overlay.track?.hasEle == true) "↗ ${leg.gainM.toInt()} m" else null,
+                ).joinToString(" · ")
+                if (extra.isNotEmpty()) addView(TextView(this@MainActivity).apply {
+                    text = extra
+                    textSize = 12f
+                    fontFeatureSettings = "tnum"
+                    setTextColor(getColor(R.color.muted))
+                })
             }
             row.addView(badge); row.addView(mid); row.addView(right)
             row.isClickable = true
@@ -666,6 +721,9 @@ class MainActivity : Activity(), OverlayView.Listener {
         val sb = StringBuilder()
         sb.append(if (timeMs >= start) formatDuration(timeMs - start) else "-" + formatDuration(start - timeMs))
         sb.append(" / ").append(formatDuration((replayPunches.lastOrNull()?.timeMs ?: b) - start))
+        val tmp = FloatArray(2)
+        val idx = t.positionAt(timeMs, tmp)
+        if (idx >= 0) profile.cursorIndex = idx
         val n = replayPunches.size
         for (k in 0 until n - 1) {
             val ta = replayPunches[k].timeMs ?: continue
@@ -676,7 +734,117 @@ class MainActivity : Activity(), OverlayView.Listener {
                 break
             }
         }
+        if (idx >= 0) sb.append("\n").append(readout(t, idx, withDistance = false))
         hint.text = sb.toString()
+    }
+
+    /** Valeurs au point [i] : distance, allure, FC, altitude (selon ce que contient la trace). */
+    private fun readout(t: Track, i: Int, withDistance: Boolean): String {
+        val parts = ArrayList<String>()
+        if (withDistance) parts.add(String.format(Locale.FRANCE, "%.2f km", t.cumDist[i] / 1000))
+        if (withDistance) t.points[i].timeMs?.let { tm -> t.startTimeMs?.let { parts.add(formatDuration(tm - it)) } }
+        val sp = t.speeds.getOrElse(i) { Float.NaN }
+        if (!sp.isNaN() && sp > 0.3f) parts.add(formatPace(1000.0 / sp))
+        val hr = t.hrs[i]
+        if (!hr.isNaN()) parts.add("♥ ${hr.toInt()}")
+        val e = t.eles[i]
+        if (!e.isNaN()) parts.add("${e.toInt()} m")
+        return parts.joinToString("  ·  ")
+    }
+
+    private fun onProfilePick(i: Int) {
+        val t = overlay.track ?: return
+        if (overlay.mode == OverlayView.Mode.REPLAY) {
+            t.points[i].timeMs?.let { overlay.setReplayTime(it) }
+        } else {
+            overlay.probeIndex = i
+            hint.text = readout(t, i, withDistance = true)
+        }
+    }
+
+    private fun setMetric(m: ProfileView.Metric) {
+        profile.metric = m
+        // La couleur de la trace suit le graphique (sauf si l'utilisateur a choisi une couleur unie).
+        if (overlay.colorMode != OverlayView.ColorMode.SOLID) {
+            overlay.colorMode = when (m) {
+                ProfileView.Metric.PACE -> OverlayView.ColorMode.SPEED
+                ProfileView.Metric.ELEVATION -> OverlayView.ColorMode.ELEVATION
+                ProfileView.Metric.HEART_RATE -> OverlayView.ColorMode.HEART_RATE
+            }
+        }
+        refreshUi()
+    }
+
+    private fun pickDefaultMetric(t: Track) {
+        val current = profile.metric
+        val ok = when (current) {
+            ProfileView.Metric.PACE -> t.hasTimes
+            ProfileView.Metric.ELEVATION -> t.hasEle
+            ProfileView.Metric.HEART_RATE -> t.hasHr
+        }
+        if (!ok) profile.metric = when {
+            t.hasTimes -> ProfileView.Metric.PACE
+            t.hasHr -> ProfileView.Metric.HEART_RATE
+            else -> ProfileView.Metric.ELEVATION
+        }
+    }
+
+    private fun styleChip(c: TextView, selected: Boolean, enabled: Boolean) {
+        c.isEnabled = enabled
+        c.alpha = if (enabled) 1f else 0.4f
+        c.setTextColor(getColor(if (selected) R.color.accent else R.color.ink))
+        c.background = if (selected) GradientDrawable().apply {
+            cornerRadius = 12 * resources.displayMetrics.density; setColor(getColor(R.color.accent_soft))
+        } else getDrawable(R.drawable.bg_chip)
+    }
+
+    private fun updateLegend() {
+        val t = overlay.track ?: return
+        val cm = overlay.effectiveColorMode
+        val dp = resources.displayMetrics.density
+        legendBar.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, OverlayView.rampStops(cm)).apply {
+            cornerRadius = 4 * dp
+        }
+        val lo = overlay.colorLo; val hi = overlay.colorHi
+        legendLabel.text = when (cm) {
+            OverlayView.ColorMode.SPEED ->
+                "Allure : " + formatPace(1000.0 / lo.coerceAtLeast(0.3f)).removeSuffix("/km") + " → " + formatPace(1000.0 / hi.coerceAtLeast(0.3f))
+            OverlayView.ColorMode.ELEVATION -> String.format(Locale.FRANCE, "Altitude : %d → %d m", lo.toInt(), hi.toInt())
+            OverlayView.ColorMode.HEART_RATE -> String.format(Locale.FRANCE, "FC : %d → %d bpm", lo.toInt(), hi.toInt())
+            OverlayView.ColorMode.SOLID -> "Couleur unie · toucher pour changer"
+        }
+        if (overlay.colorMode != OverlayView.ColorMode.SOLID && cm == OverlayView.ColorMode.SOLID) {
+            legendLabel.text = "Donnée absente de la trace · couleur unie"
+        }
+        if (!t.hasTimes && !t.hasEle && !t.hasHr) legendLabel.text = "Couleur unie"
+    }
+
+    private fun showColorDialog() {
+        val t = overlay.track ?: return
+        val modes = listOf(
+            OverlayView.ColorMode.SPEED to ("Allure (vitesse)" to t.hasTimes),
+            OverlayView.ColorMode.HEART_RATE to ("Fréquence cardiaque" to t.hasHr),
+            OverlayView.ColorMode.ELEVATION to ("Altitude" to t.hasEle),
+            OverlayView.ColorMode.SOLID to ("Couleur unie" to true),
+        )
+        val labels = modes.map { (_, v) -> if (v.second) v.first else v.first + " (absente de la trace)" }.toTypedArray()
+        val cur = modes.indexOfFirst { it.first == overlay.colorMode }
+        AlertDialog.Builder(this)
+            .setTitle("Couleur de la trace")
+            .setSingleChoiceItems(labels, cur) { d, which ->
+                val (m, info) = modes[which]
+                if (!info.second) { toast("Cette trace ne contient pas cette donnée."); return@setSingleChoiceItems }
+                overlay.colorMode = m
+                when (m) {
+                    OverlayView.ColorMode.SPEED -> profile.metric = ProfileView.Metric.PACE
+                    OverlayView.ColorMode.HEART_RATE -> profile.metric = ProfileView.Metric.HEART_RATE
+                    OverlayView.ColorMode.ELEVATION -> profile.metric = ProfileView.Metric.ELEVATION
+                    OverlayView.ColorMode.SOLID -> {}
+                }
+                refreshUi()
+                d.dismiss()
+            }
+            .show()
     }
 
     // ---------- Échelle ----------
@@ -772,7 +940,9 @@ class MainActivity : Activity(), OverlayView.Listener {
             .putString("traceMatrix", v.joinToString(","))
             .putString("controls", overlay.controls.joinToString(";") { "${it[0]},${it[1]}" })
             .putString("controlsMap", mapUri?.toString())
-            .putBoolean("speedColors", overlay.speedColors)
+            .putString("colorMode", overlay.colorMode.name)
+            .putString("chartMetric", profile.metric.name)
+            .putBoolean("showProfile", showProfile)
             .putBoolean("lockScale", overlay.lockTraceScale)
             .putFloat("traceWidth", overlay.traceWidthDp)
             .putFloat("replaySpeed", overlay.replaySpeed)
@@ -834,7 +1004,31 @@ class MainActivity : Activity(), OverlayView.Listener {
             statTime.text = t.durationMs?.let { formatDuration(it) } ?: "—"
             statPace.text = t.paceSecPerKm?.let { formatPace(it) } ?: "—"
         }
-        legend.visibility = if (t != null && overlay.speedColors && t.hasTimes) View.VISIBLE else View.GONE
+        if (t != null) {
+            statGainBox.visibility = if (t.hasEle) View.VISIBLE else View.GONE
+            statGain.text = String.format(Locale.FRANCE, "%d m", t.gainM.toInt())
+            statHrBox.visibility = if (t.hasHr) View.VISIBLE else View.GONE
+            statHr.text = t.avgHr?.let { String.format(Locale.FRANCE, "%d", it.toInt()) } ?: "—"
+            findViewById<TextView>(R.id.statHrLabel).text = "FC moy." + (t.maxHr?.let { " · max $it" } ?: "")
+        }
+        // En replay, les valeurs en direct remplacent les statistiques : plus de place pour la carte.
+        val replayMode = mode == OverlayView.Mode.REPLAY
+        findViewById<View>(R.id.statsScroll).visibility = if (t == null || replayMode) View.GONE else View.VISIBLE
+        findViewById<View>(R.id.legendRow).visibility = if (t == null || replayMode) View.GONE else View.VISIBLE
+        updateLegend()
+        val profileShown = t != null && (showProfile || mode == OverlayView.Mode.REPLAY)
+        profileBox.visibility = if (profileShown) View.VISIBLE else View.GONE
+        btnProfile.visibility = if (mode == OverlayView.Mode.REPLAY) View.GONE else View.VISIBLE
+        btnProfile.background = if (showProfile) GradientDrawable().apply {
+            cornerRadius = 12 * resources.displayMetrics.density; setColor(getColor(R.color.accent_soft))
+        } else getDrawable(R.drawable.bg_chip)
+        if (!profileShown) overlay.probeIndex = -1
+        if (profileShown) {
+            styleChip(chipPace, profile.metric == ProfileView.Metric.PACE, t?.hasTimes == true)
+            styleChip(chipEle, profile.metric == ProfileView.Metric.ELEVATION, t?.hasEle == true)
+            styleChip(chipHr, profile.metric == ProfileView.Metric.HEART_RATE, t?.hasHr == true)
+            profile.punchIndices = computePunches()?.first?.map { it.pointIndex }?.toIntArray() ?: IntArray(0)
+        }
 
         val replay = mode == OverlayView.Mode.REPLAY
         hint.textSize = if (replay) 15f else 13f

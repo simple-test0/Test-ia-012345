@@ -36,6 +36,9 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
 
     enum class Mode { MAP, TRACE, CALIBRATE, CONTROLS, REPLAY }
 
+    /** Ce que représente la couleur de la trace. */
+    enum class ColorMode { SPEED, ELEVATION, HEART_RATE, SOLID }
+
     interface Listener {
         fun onStateChanged()
         fun onMessage(msg: String)
@@ -71,8 +74,30 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
             listener?.onStateChanged()
         }
 
-    var speedColors = true
+    var colorMode = ColorMode.SPEED
         set(value) { field = value; rebuildBins(); invalidate() }
+
+    /** Mode de couleur réellement appliqué (repli sur une couleur unie si la donnée manque). */
+    val effectiveColorMode: ColorMode
+        get() {
+            val t = track ?: return ColorMode.SOLID
+            return when (colorMode) {
+                ColorMode.SPEED -> if (t.hasTimes) ColorMode.SPEED else ColorMode.SOLID
+                ColorMode.ELEVATION -> if (t.hasEle) ColorMode.ELEVATION else ColorMode.SOLID
+                ColorMode.HEART_RATE -> if (t.hasHr) ColorMode.HEART_RATE else ColorMode.SOLID
+                ColorMode.SOLID -> ColorMode.SOLID
+            }
+        }
+
+    /** Valeurs des deux bouts de l'échelle de couleur (m/s, m ou bpm). */
+    var colorLo = 0f
+        private set
+    var colorHi = 1f
+        private set
+
+    /** Point de la trace montré par le graphique (anneau sur la carte), ou -1. */
+    var probeIndex = -1
+        set(value) { field = value; invalidate() }
 
     /** Épaisseur de la trace en dp. */
     var traceWidthDp = 4f
@@ -180,6 +205,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         screenPts = FloatArray(t?.local?.size ?: 0)
         calibLocal.clear(); calibMap.clear(); pendingTraceIdx = -1
         clearHighlight()
+        probeIndex = -1
         replayPlaying = false
         replayTimeMs = t?.startTimeMs ?: 0
         rebuildBins()
@@ -381,24 +407,36 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         if (t == null || t.points.size < 2) {
             bins = emptyArray(); binBuffers = emptyArray(); binColors = IntArray(0); segColor = IntArray(0); return
         }
-        val useSpeed = speedColors && t.hasTimes
-        val nBins = if (useSpeed) 12 else 1
+        val cm = effectiveColorMode
+        // Valeur de chaque tronçon i → i+1.
+        val seg = FloatArray(t.points.size) { Float.NaN }
+        for (i in 0 until t.points.size - 1) {
+            seg[i] = when (cm) {
+                ColorMode.SPEED -> t.speeds[i]
+                ColorMode.ELEVATION -> mean(t.eles[i], t.eles[i + 1])
+                ColorMode.HEART_RATE -> mean(t.hrs[i], t.hrs[i + 1])
+                ColorMode.SOLID -> Float.NaN
+            }
+        }
+        val nBins = if (cm == ColorMode.SOLID) 1 else 16
         var lo = 0f; var hi = 1f
-        if (useSpeed) {
-            val sorted = t.speeds.filter { !it.isNaN() }.sorted()
-            lo = sorted[(sorted.size * 0.05).toInt().coerceIn(0, sorted.size - 1)]
-            hi = sorted[(sorted.size * 0.95).toInt().coerceIn(0, sorted.size - 1)]
-            if (hi - lo < 0.05f) hi = lo + 0.05f
+        if (cm != ColorMode.SOLID) {
+            val sorted = seg.filter { !it.isNaN() }.sorted()
+            // L'altitude utilise min/max ; vitesse et FC ignorent les 5 % extrêmes (pauses, artefacts).
+            val q = if (cm == ColorMode.ELEVATION) 0.0 else 0.05
+            lo = sorted[(sorted.size * q).toInt().coerceIn(0, sorted.size - 1)]
+            hi = sorted[(sorted.size * (1 - q)).toInt().coerceIn(0, sorted.size - 1)]
+            val minSpan = when (cm) { ColorMode.SPEED -> 0.05f; else -> 1f }
+            if (hi - lo < minSpan) hi = lo + minSpan
         }
-        binColors = IntArray(nBins) { i ->
-            if (!useSpeed) Color.rgb(230, 20, 30) else speedColor(i / (nBins - 1f))
-        }
+        colorLo = lo; colorHi = hi
+        binColors = IntArray(nBins) { i -> if (cm == ColorMode.SOLID) SOLID_COLOR else rampColor(cm, i / (nBins - 1f)) }
         val lists = Array(nBins) { ArrayList<Int>() }
         segColor = IntArray(t.points.size)
         t.forEachSegment { a, b ->
             for (i in a until b - 1) {
-                val bin = if (!useSpeed) 0 else {
-                    val s = t.speeds[i]
+                val bin = if (cm == ColorMode.SOLID) 0 else {
+                    val s = seg[i]
                     if (s.isNaN()) 0 else (((s - lo) / (hi - lo)) * nBins).toInt().coerceIn(0, nBins - 1)
                 }
                 lists[bin].add(i)
@@ -409,11 +447,10 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         binBuffers = Array(nBins) { FloatArray(bins[it].size * 4) }
     }
 
-    /** 0 = lent (rouge) → 0,5 = jaune → 1 = rapide (vert). */
-    private fun speedColor(f: Float): Int {
-        val r: Int; val g: Int
-        if (f < 0.5f) { r = 230; g = (40 + 400 * f).toInt() } else { r = (230 - 420 * (f - 0.5f)).toInt(); g = 240 - (60 * (f - 0.5f)).toInt() }
-        return Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), 30)
+    private fun mean(a: Float, b: Float) = when {
+        a.isNaN() -> b
+        b.isNaN() -> a
+        else -> (a + b) / 2
     }
 
     // ---------- Dessin ----------
@@ -445,6 +482,13 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         if (mode == Mode.REPLAY) drawReplay(canvas, t, w)
         else drawStartFinish(canvas, screenPts, t, 9 * density)
         if (mode == Mode.CALIBRATE) drawCalibration(canvas)
+        if (probeIndex in 0 until t.points.size && mode != Mode.REPLAY) {
+            val x = screenPts[2 * probeIndex]; val y = screenPts[2 * probeIndex + 1]
+            fillPaint.color = Color.WHITE
+            canvas.drawCircle(x, y, 9 * density, fillPaint)
+            fillPaint.color = HIGHLIGHT
+            canvas.drawCircle(x, y, 6.5f * density, fillPaint)
+        }
     }
 
     private fun viewScale(): Float {
@@ -892,5 +936,30 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         val COURSE_COLOR = Color.argb(230, 166, 38, 255)
         val HIGHLIGHT = Color.rgb(37, 99, 235)
         val MAP_BG = Color.rgb(233, 231, 225)
+        val SOLID_COLOR = Color.rgb(230, 20, 30)
+
+        /** Couleurs de l'échelle pour chaque mode (du bas vers le haut de l'échelle). */
+        fun rampStops(cm: ColorMode): IntArray = when (cm) {
+            // lent → rapide
+            ColorMode.SPEED -> intArrayOf(Color.rgb(230, 40, 30), Color.rgb(230, 210, 30), Color.rgb(20, 200, 40))
+            // bas → haut : vert, jaune, brun
+            ColorMode.ELEVATION -> intArrayOf(Color.rgb(30, 150, 70), Color.rgb(235, 200, 40), Color.rgb(150, 70, 20))
+            // FC basse → haute : bleu, vert, jaune, rouge
+            ColorMode.HEART_RATE -> intArrayOf(Color.rgb(40, 110, 230), Color.rgb(30, 180, 80), Color.rgb(240, 200, 30), Color.rgb(220, 30, 40))
+            ColorMode.SOLID -> intArrayOf(SOLID_COLOR, SOLID_COLOR)
+        }
+
+        fun rampColor(cm: ColorMode, f: Float): Int {
+            val stops = rampStops(cm)
+            val x = f.coerceIn(0f, 1f) * (stops.size - 1)
+            val i = x.toInt().coerceAtMost(stops.size - 2)
+            val u = x - i
+            val a = stops[i]; val b = stops[i + 1]
+            return Color.rgb(
+                (Color.red(a) + (Color.red(b) - Color.red(a)) * u).toInt(),
+                (Color.green(a) + (Color.green(b) - Color.green(a)) * u).toInt(),
+                (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * u).toInt(),
+            )
+        }
     }
 }

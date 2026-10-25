@@ -89,6 +89,27 @@ class MainActivityTest {
 
         // Le texte des stats est rempli.
         screenshotRoot(activity, "ecran_principal")
+
+        // Graphique de profil : ouverture, choix de l'altitude, toucher → point sur la carte.
+        activity.findViewById<android.view.View>(R.id.btnProfile).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        val prof = activity.findViewById<ProfileView>(R.id.profile)
+        assertEquals(android.view.View.VISIBLE, activity.findViewById<android.view.View>(R.id.profileBox).visibility)
+        assertTrue(prof.hasData)
+        val pw = prof.width.toFloat()
+        val ev = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, pw * 0.5f, 20f, 0)
+        prof.dispatchTouchEvent(ev); ev.recycle()
+        assertTrue(overlay.probeIndex in 100..140)
+        screenshotRoot(activity, "ecran_profil")
+        activity.findViewById<android.view.View>(R.id.chipHr).performClick()
+        assertEquals(ProfileView.Metric.HEART_RATE, prof.metric)
+        assertEquals(OverlayView.ColorMode.HEART_RATE, overlay.colorMode)
+        val legendText = activity.findViewById<android.widget.TextView>(R.id.legendLabel).text.toString()
+        assertTrue(legendText, legendText.contains("bpm"))
+        screenshotRoot(activity, "ecran_profil_fc")
+        activity.findViewById<android.view.View>(R.id.chipPace).performClick()
+        activity.findViewById<android.view.View>(R.id.btnProfile).performClick()
+        assertEquals(-1, overlay.probeIndex)
         val stats = activity.findViewById<android.widget.TextView>(R.id.statDist).text.toString()
         assertTrue(stats, stats.contains("km"))
 

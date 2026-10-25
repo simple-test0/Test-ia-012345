@@ -56,6 +56,26 @@
         <item name="android:drawableTint">@color/ink</item>
     </style>
 
+    <style name="StatItem">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:paddingHorizontal">6dp</item>
+        <item name="android:layout_marginEnd">4dp</item>
+    </style>
+
+    <style name="Chip">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">30dp</item>
+        <item name="android:layout_marginEnd">6dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingHorizontal">12dp</item>
+        <item name="android:background">@drawable/bg_chip</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
     <style name="StatValue">
         <item name="android:textSize">17sp</item>
         <item name="android:fontFamily">sans-serif-medium</item>

@@ -7,7 +7,7 @@
     <string name="open_track_long">Ouvrir une trace</string>
     <string name="welcome_title">Analysez votre course</string>
     <string name="welcome_text">Superposez votre trace GPS sur la carte de course d\'orientation, placez les postes et comparez vos sections.</string>
-    <string name="welcome_tip">Carte : image ou PDF · Trace : GPX, FIT ou TCX.\nVous pouvez aussi « Partager » un fichier vers Trace O.</string>
+    <string name="welcome_tip">Carte : image ou PDF · Trace : GPX, FIT, TCX ou ZIP Garmin.\nVous pouvez aussi « Partager » un fichier vers Trace O.</string>
     <string name="splits">Temps intermédiaires</string>
     <string name="splits_short">Temps</string>
     <string name="map_scale">Échelle de la carte…</string>
@@ -33,6 +33,13 @@
     <string name="stat_distance">Distance</string>
     <string name="stat_time">Durée</string>
     <string name="stat_pace">Allure</string>
+    <string name="stat_gain">D+</string>
+    <string name="stat_hr">FC moy.</string>
+    <string name="profile">Profil</string>
+    <string name="metric_pace">Allure</string>
+    <string name="metric_ele">Altitude</string>
+    <string name="metric_hr">FC</string>
+    <string name="color_mode">Couleur de la trace…</string>
     <string name="slow">lent</string>
     <string name="fast">rapide</string>
 </resources>

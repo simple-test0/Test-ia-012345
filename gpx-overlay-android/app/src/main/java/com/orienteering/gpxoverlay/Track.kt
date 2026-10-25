@@ -8,7 +8,14 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-data class TrackPoint(val lat: Double, val lon: Double, val ele: Double? = null, val timeMs: Long? = null)
+data class TrackPoint(
+    val lat: Double,
+    val lon: Double,
+    val ele: Double? = null,
+    val timeMs: Long? = null,
+    /** Fréquence cardiaque (battements/min). */
+    val hr: Int? = null,
+)
 
 /**
  * Une trace GPX projetée dans un repère local en mètres :
@@ -31,6 +38,16 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
     val cumDist: DoubleArray
     /** Indices des points horodatés, dans l'ordre. */
     val timedIdx: IntArray
+    /** Altitude de chaque point (m), NaN si inconnue. */
+    val eles: FloatArray
+    /** Fréquence cardiaque de chaque point, NaN si inconnue. */
+    val hrs: FloatArray
+    /** Dénivelé positif cumulé depuis le début (m). */
+    val cumGain: FloatArray
+    val gainM: Double
+    val lossM: Double
+    val avgHr: Double?
+    val maxHr: Int?
 
     init {
         val segs = segments.filter { it.isNotEmpty() }
@@ -74,6 +91,30 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
             if (t != null && t >= lastT) { timed.add(i); lastT = t }
         }
         timedIdx = timed.toIntArray()
+
+        eles = FloatArray(points.size) { points[it].ele?.toFloat() ?: Float.NaN }
+        hrs = FloatArray(points.size) { i -> points[i].hr?.takeIf { it in 25..250 }?.toFloat() ?: Float.NaN }
+
+        // Dénivelé avec hystérésis de 3 m : on ignore les petites oscillations de l'altitude GPS.
+        cumGain = FloatArray(points.size)
+        var gain = 0.0
+        var loss = 0.0
+        var ref = Float.NaN
+        for (i in points.indices) {
+            val e = eles[i]
+            if (!e.isNaN()) {
+                if (ref.isNaN()) ref = e
+                else if (e - ref >= 3f) { gain += e - ref; ref = e }
+                else if (ref - e >= 3f) { loss += ref - e; ref = e }
+            }
+            cumGain[i] = gain.toFloat()
+        }
+        gainM = gain
+        lossM = loss
+
+        val validHr = hrs.filter { !it.isNaN() }
+        avgHr = if (validHr.isEmpty()) null else validHr.average()
+        maxHr = validHr.maxOrNull()?.toInt()
 
         val t0 = points.firstOrNull { it.timeMs != null }?.timeMs
         val t1 = points.lastOrNull { it.timeMs != null }?.timeMs
@@ -126,6 +167,22 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
     }
 
     val isEmpty: Boolean get() = points.isEmpty()
+    val hasHr: Boolean get() = avgHr != null
+    val hasEle: Boolean get() = eles.count { !it.isNaN() } >= 2
+
+    /** Fréquence cardiaque moyenne entre deux points, ou null. */
+    fun avgHrBetween(from: Int, to: Int): Double? {
+        var sum = 0.0
+        var n = 0
+        for (i in from..to.coerceAtMost(points.size - 1)) {
+            val h = hrs[i]
+            if (!h.isNaN()) { sum += h; n++ }
+        }
+        return if (n == 0) null else sum / n
+    }
+
+    /** Dénivelé positif entre deux points (m). */
+    fun gainBetween(from: Int, to: Int): Double = (cumGain[to] - cumGain[from]).toDouble()
     val hasTimes: Boolean get() = speeds.any { !it.isNaN() }
 
     inline fun forEachSegment(block: (start: Int, end: Int) -> Unit) {

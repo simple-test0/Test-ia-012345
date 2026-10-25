@@ -190,43 +190,130 @@
         android:paddingTop="10dp"
         android:paddingBottom="4dp">
 
-        <!-- Statistiques -->
-        <LinearLayout
-            android:id="@+id/statsRow"
+        <!-- Statistiques (défilent si besoin) -->
+        <HorizontalScrollView
+            android:id="@+id/statsScroll"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/statsRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingHorizontal="10dp">
+
+                <LinearLayout style="@style/StatItem">
+                    <TextView android:id="@+id/statDist" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                    <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_distance" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/StatItem">
+                    <TextView android:id="@+id/statTime" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                    <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_time" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/StatItem">
+                    <TextView android:id="@+id/statPace" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                    <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_pace" />
+                </LinearLayout>
+
+                <LinearLayout android:id="@+id/statGainBox" style="@style/StatItem">
+                    <TextView android:id="@+id/statGain" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                    <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_gain" />
+                </LinearLayout>
+
+                <LinearLayout android:id="@+id/statHrBox" style="@style/StatItem">
+                    <TextView android:id="@+id/statHr" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                    <TextView android:id="@+id/statHrLabel" style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_hr" />
+                </LinearLayout>
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Légende des couleurs + bouton du graphique -->
+        <LinearLayout
+            android:id="@+id/legendRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="16dp">
-
-            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                <TextView android:id="@+id/statDist" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_distance" />
-            </LinearLayout>
-
-            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                <TextView android:id="@+id/statTime" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_time" />
-            </LinearLayout>
-
-            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1.2" android:orientation="vertical">
-                <TextView android:id="@+id/statPace" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_pace" />
-            </LinearLayout>
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp">
 
             <LinearLayout
                 android:id="@+id/legend"
-                android:layout_width="64dp"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:background="?android:attr/selectableItemBackground"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <View android:layout_width="match_parent" android:layout_height="6dp" android:background="@drawable/speed_legend" />
+                <View
+                    android:id="@+id/legendBar"
+                    android:layout_width="56dp"
+                    android:layout_height="8dp" />
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:orientation="horizontal">
-                    <TextView style="@style/StatLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/slow" />
-                    <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/fast" />
-                </LinearLayout>
+                <TextView
+                    android:id="@+id/legendLabel"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:fontFeatureSettings="tnum"
+                    android:singleLine="true"
+                    android:textColor="@color/muted"
+                    android:textSize="12sp" />
             </LinearLayout>
+
+            <Button
+                android:id="@+id/btnProfile"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_chip"
+                android:drawableStart="@drawable/ic_chart"
+                android:drawablePadding="4dp"
+                android:drawableTint="@color/ink"
+                android:fontFamily="sans-serif-medium"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingHorizontal="10dp"
+                android:text="@string/profile"
+                android:textAllCaps="false"
+                android:textColor="@color/ink"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- Graphique : allure, altitude, FC -->
+        <LinearLayout
+            android:id="@+id/profileBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="8dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal">
+
+                <TextView android:id="@+id/chipPace" style="@style/Chip" android:text="@string/metric_pace" />
+                <TextView android:id="@+id/chipEle" style="@style/Chip" android:text="@string/metric_ele" />
+                <TextView android:id="@+id/chipHr" style="@style/Chip" android:text="@string/metric_hr" />
+            </LinearLayout>
+
+            <com.orienteering.gpxoverlay.ProfileView
+                android:id="@+id/profile"
+                android:layout_width="match_parent"
+                android:layout_height="104dp"
+                android:layout_marginTop="4dp" />
         </LinearLayout>
 
         <TextView

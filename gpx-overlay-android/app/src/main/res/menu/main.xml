@@ -3,7 +3,7 @@
     <item android:id="@+id/splits" android:title="@string/splits" />
     <item android:id="@+id/map_scale" android:title="@string/map_scale" />
     <item android:id="@+id/pdf_page" android:title="@string/pdf_page" />
-    <item android:id="@+id/speed_colors" android:title="@string/speed_colors" android:checkable="true" />
+    <item android:id="@+id/color_mode" android:title="@string/color_mode" />
     <item android:id="@+id/lock_scale" android:title="@string/lock_scale" android:checkable="true" />
     <item android:id="@+id/trace_width" android:title="@string/trace_width" />
     <item android:id="@+id/reset_trace" android:title="@string/reset_trace" />

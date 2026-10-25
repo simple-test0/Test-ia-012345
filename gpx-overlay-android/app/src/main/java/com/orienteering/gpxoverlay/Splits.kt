@@ -17,6 +17,10 @@ data class Leg(
     /** Distance à vol d'oiseau entre les postes (m). */
     val straightM: Double,
     val sure: Boolean,
+    /** Fréquence cardiaque moyenne sur la section, ou null. */
+    val avgHr: Double? = null,
+    /** Dénivelé positif sur la section (m). */
+    val gainM: Double = 0.0,
 ) {
     /** Allure en secondes par km, ou null. */
     val paceSecPerKm: Double? get() = timeMs?.let { if (runM > 1) it / 1000.0 / (runM / 1000.0) else null }
@@ -110,6 +114,8 @@ object Splits {
                     runM = track.cumDist[b.pointIndex] - track.cumDist[a.pointIndex],
                     straightM = hypot(controls[2 * k] - controls[2 * k - 2], controls[2 * k + 1] - controls[2 * k - 1]),
                     sure = a.sure && b.sure,
+                    avgHr = track.avgHrBetween(a.pointIndex, b.pointIndex),
+                    gainM = track.gainBetween(a.pointIndex, b.pointIndex),
                 )
             )
         }

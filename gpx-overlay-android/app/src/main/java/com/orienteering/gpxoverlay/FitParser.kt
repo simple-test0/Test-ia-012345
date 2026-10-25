@@ -15,6 +15,7 @@ object FitParser {
     private const val FIELD_LON = 1
     private const val FIELD_ALT = 2
     private const val FIELD_ENH_ALT = 78
+    private const val FIELD_HR = 3
     /** Écart entre l'époque FIT (31/12/1989) et l'époque Unix, en secondes. */
     private const val FIT_EPOCH_S = 631_065_600L
     private const val SEMICIRCLE_TO_DEG = 180.0 / 2147483648.0
@@ -95,6 +96,7 @@ object FitParser {
         var lat = Int.MAX_VALUE
         var lon = Int.MAX_VALUE
         var alt: Double? = null
+        var hr: Int? = null
         for (f in def.fields) {
             if (def.global == MSG_RECORD || f.num == FIELD_TIMESTAMP) {
                 when {
@@ -109,6 +111,10 @@ object FitParser {
                         val v = bb.getInt(pos).toLong() and 0xFFFFFFFFL
                         if (v != 0xFFFFFFFFL) alt = v / 5.0 - 500
                     }
+                    f.num == FIELD_HR && f.size == 1 -> {
+                        val v = data[pos].toInt() and 0xFF
+                        if (v != 0xFF) hr = v
+                    }
                     f.num == FIELD_ALT && f.size == 2 && alt == null -> {
                         val v = bb.getShort(pos).toInt() and 0xFFFF
                         if (v != 0xFFFF) alt = v / 5.0 - 500
@@ -122,7 +128,7 @@ object FitParser {
             val la = lat * SEMICIRCLE_TO_DEG
             val lo = lon * SEMICIRCLE_TO_DEG
             if (la in -90.0..90.0 && lo in -180.0..180.0) {
-                out.add(TrackPoint(la, lo, alt, if (ts >= 0) (ts + FIT_EPOCH_S) * 1000 else null))
+                out.add(TrackPoint(la, lo, alt, if (ts >= 0) (ts + FIT_EPOCH_S) * 1000 else null, hr))
             }
         }
         return pos

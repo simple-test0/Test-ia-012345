@@ -59,8 +59,10 @@ object GpxParser {
         private var lon = 0.0
         private var ele: Double? = null
         private var time: Long? = null
+        private var hr: Int? = null
         private var inPoint = false
         private var tcxPoint = false
+        private var inHeartRate = false
         private var depth = 0
         private var pointDepth = 0
         private val text = StringBuilder()
@@ -73,8 +75,9 @@ object GpxParser {
             text.setLength(0)
             when (local(localName, qName)) {
                 "trkseg", "track" -> { current = mutableListOf<TrackPoint>().also { trackSegments.add(it) } }
+                "heartratebpm" -> inHeartRate = true
                 "trackpoint" -> {
-                    lat = Double.NaN; lon = Double.NaN; ele = null; time = null
+                    lat = Double.NaN; lon = Double.NaN; ele = null; time = null; hr = null
                     inPoint = true; tcxPoint = true; pointDepth = depth
                 }
                 "rte" -> { current = mutableListOf<TrackPoint>().also { routes.add(it) } }
@@ -82,7 +85,7 @@ object GpxParser {
                     val la = attrs.getValue("lat")?.toDoubleOrNull()
                     val lo = attrs.getValue("lon")?.toDoubleOrNull()
                     if (la != null && lo != null && la in -90.0..90.0 && lo in -180.0..180.0) {
-                        lat = la; lon = lo; ele = null; time = null
+                        lat = la; lon = lo; ele = null; time = null; hr = null
                         inPoint = true; pointDepth = depth
                     }
                 }
@@ -98,6 +101,10 @@ object GpxParser {
             if (inPoint) {
                 when (n) {
                     "ele", "altitudemeters" -> ele = text.toString().trim().toDoubleOrNull()
+                    // Garmin : <gpxtpx:hr> (GPX) ou <HeartRateBpm><Value> (TCX).
+                    "hr", "heartrate", "heart_rate" -> hr = text.toString().trim().toDoubleOrNull()?.toInt()
+                    "value" -> if (inHeartRate) hr = text.toString().trim().toDoubleOrNull()?.toInt()
+                    "heartratebpm" -> inHeartRate = false
                     "time" -> time = parseTime(text.toString())
                     "latitudedegrees" -> lat = text.toString().trim().toDoubleOrNull() ?: Double.NaN
                     "longitudedegrees" -> lon = text.toString().trim().toDoubleOrNull() ?: Double.NaN
@@ -105,7 +112,7 @@ object GpxParser {
                         // Les Trackpoint sans position (pause, capteur seul) sont ignorés.
                         if (lat in -90.0..90.0 && lon in -180.0..180.0) {
                             val seg = current ?: mutableListOf<TrackPoint>().also { current = it; trackSegments.add(it) }
-                            seg.add(TrackPoint(lat, lon, ele, time))
+                            seg.add(TrackPoint(lat, lon, ele, time, hr))
                         }
                         inPoint = false; tcxPoint = false
                     }
@@ -114,7 +121,7 @@ object GpxParser {
                             current = it
                             if (n == "trkpt") trackSegments.add(it) else routes.add(it)
                         }
-                        seg.add(TrackPoint(lat, lon, ele, time))
+                        seg.add(TrackPoint(lat, lon, ele, time, hr))
                         inPoint = false
                     }
                 }

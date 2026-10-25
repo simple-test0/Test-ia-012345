@@ -6,7 +6,16 @@ sur une **carte de course d'orientation**, fournie en **image** (JPEG, PNG, WebP
 ## Fonctions
 
 - Ouvrir une carte : image ou PDF (choix de la page si le PDF en contient plusieurs).
-- Ouvrir une trace **GPX**, **FIT** (fichier natif des montres Garmin, Coros, Suunto…) ou **TCX**.
+- Ouvrir une trace **GPX**, **FIT** (fichier natif des montres Garmin, Coros, Suunto…), **TCX**
+  ou le **ZIP** « fichier d'origine » de Garmin Connect. Altitude et fréquence cardiaque sont lues
+  (extensions Garmin des GPX, champs FIT/TCX).
+- **Garmin** : sur connect.garmin.com, activité → roue dentée → « Exporter le fichier d'origine »
+  (ZIP avec le FIT) ou « Exporter au format GPX », puis ouvrir le fichier dans Trace O.
+- **Statistiques** : distance, durée, allure, dénivelé positif, FC moyenne et maximale.
+- **Couleur de la trace** au choix : allure, altitude, fréquence cardiaque ou couleur unie, avec
+  légende chiffrée.
+- **Profil** : graphique de l'allure, de l'altitude ou de la FC en fonction de la distance, avec
+  les postes ; le toucher montre le point sur la carte (et déplace le replay).
 - **Partager vers Trace O** / **Ouvrir avec Trace O** depuis une autre app (gestionnaire de
   fichiers, Garmin, mail…) : une trace ou une carte, ou les deux en même temps.
   Strava ne partage qu'un lien : exportez le GPX depuis strava.com (« … » → « Exporter au format GPX »).
@@ -20,7 +29,7 @@ sur une **carte de course d'orientation**, fournie en **image** (JPEG, PNG, WebP
     Option « Verrouiller l'échelle » pour ne plus changer la taille en tournant.
 - **Postes** : touchez la carte pour placer le départ, les postes puis l'arrivée (un poste se
   déplace en le faisant glisser). Le circuit est dessiné comme sur une carte de CO.
-- **Temps intermédiaires** : temps, cumul, allure et distance de chaque section, la plus lente en
+- **Temps intermédiaires** : temps, cumul, allure, distance, FC moyenne et D+ de chaque section, la plus lente en
   rouge et la plus rapide en vert. Touchez une section pour la voir en bleu sur la carte.
   Le passage à un poste est le point de la trace le plus proche, à moins de 30 m ;
   « ? » signale un poste où la trace n'est pas passée assez près.
@@ -64,10 +73,11 @@ pour ARM) : le plus simple est de passer par GitHub Actions.
 
 | Fichier | Rôle |
 |---|---|
-| `TrackParser.kt` | Reconnaît le format (GPX/TCX ou FIT) |
+| `TrackParser.kt` | Reconnaît le format (GPX/TCX, FIT ou ZIP Garmin) |
 | `GpxParser.kt` | Lecture du GPX et du TCX (SAX), dates ISO 8601 |
 | `FitParser.kt` | Lecture des fichiers FIT (messages « record ») |
 | `Splits.kt` | Détection des passages aux postes, temps intermédiaires |
+| `ProfileView.kt` | Graphique allure / altitude / FC |
 | `Track.kt` | Projection en mètres, distance, durée, vitesse lissée, position à un instant |
 | `Similarity.kt` | Calcul du calage (rotation + échelle + translation) |
 | `MapLoader.kt` | Chargement des images et rendu des PDF (`PdfRenderer`) |
