@@ -10,22 +10,24 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.text.InputType
 import android.view.Gravity
-import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
-import android.widget.TableLayout
-import android.widget.TableRow
 import android.widget.TextView
-import android.widget.Toast
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -33,7 +35,24 @@ import java.util.concurrent.Executors
 class MainActivity : Activity(), OverlayView.Listener {
 
     private lateinit var overlay: OverlayView
-    private lateinit var stats: TextView
+    private lateinit var root: View
+    private lateinit var topBar: View
+    private lateinit var subtitle: TextView
+    private lateinit var emptyState: View
+    private lateinit var bottomPanel: View
+    private lateinit var statsRow: View
+    private lateinit var statDist: TextView
+    private lateinit var statTime: TextView
+    private lateinit var statPace: TextView
+    private lateinit var legend: View
+    private lateinit var btnFit: View
+    private lateinit var splitsSheet: View
+    private lateinit var splitsList: LinearLayout
+    private lateinit var splitsScroll: ScrollView
+    private lateinit var splitsSummary: TextView
+    private lateinit var snackbar: View
+    private lateinit var snackText: TextView
+    private lateinit var snackAction: Button
     private lateinit var hint: TextView
     private lateinit var progress: ProgressBar
     private lateinit var modeBar: View
@@ -45,7 +64,7 @@ class MainActivity : Activity(), OverlayView.Listener {
     private lateinit var btnCalib: Button
     private lateinit var btnControls: Button
     private lateinit var btnReplay: Button
-    private lateinit var btnPlay: Button
+    private lateinit var btnPlay: ImageButton
     private lateinit var btnSpeed: Button
     private lateinit var replaySeek: SeekBar
 
@@ -58,6 +77,11 @@ class MainActivity : Activity(), OverlayView.Listener {
     private var mapPageCount = 1
     private var mapPxPerMm: Double? = null
     private var gpxUri: Uri? = null
+    private var mapName: String? = null
+    private var trackName: String? = null
+    private var selectedLeg = -1
+    private val handler = Handler(Looper.getMainLooper())
+    private val hideSnack = Runnable { snackbar.visibility = View.GONE }
     private var scaleDenominator = 10000
     private var imageDpi = 300
 
@@ -74,7 +98,24 @@ class MainActivity : Activity(), OverlayView.Listener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         overlay = findViewById(R.id.overlay)
-        stats = findViewById(R.id.stats)
+        root = findViewById(R.id.root)
+        topBar = findViewById(R.id.topBar)
+        subtitle = findViewById(R.id.subtitle)
+        emptyState = findViewById(R.id.emptyState)
+        bottomPanel = findViewById(R.id.bottomPanel)
+        statsRow = findViewById(R.id.statsRow)
+        statDist = findViewById(R.id.statDist)
+        statTime = findViewById(R.id.statTime)
+        statPace = findViewById(R.id.statPace)
+        legend = findViewById(R.id.legend)
+        btnFit = findViewById(R.id.btnFit)
+        splitsSheet = findViewById(R.id.splitsSheet)
+        splitsList = findViewById(R.id.splitsList)
+        splitsScroll = findViewById(R.id.splitsScroll)
+        splitsSummary = findViewById(R.id.splitsSummary)
+        snackbar = findViewById(R.id.snackbar)
+        snackText = findViewById(R.id.snackText)
+        snackAction = findViewById(R.id.snackAction)
         hint = findViewById(R.id.hint)
         progress = findViewById(R.id.progress)
         modeBar = findViewById(R.id.modeBar)
@@ -89,6 +130,18 @@ class MainActivity : Activity(), OverlayView.Listener {
         btnPlay = findViewById(R.id.btnPlay)
         btnSpeed = findViewById(R.id.btnSpeed)
         replaySeek = findViewById(R.id.replaySeek)
+
+        val openMap = View.OnClickListener { pick(REQ_MAP, arrayOf("image/*", "application/pdf")) }
+        val openTrack = View.OnClickListener { pick(REQ_GPX, null) }
+        findViewById<View>(R.id.btnOpenMap).setOnClickListener(openMap)
+        findViewById<View>(R.id.btnOpenTrack).setOnClickListener(openTrack)
+        findViewById<View>(R.id.btnEmptyMap).setOnClickListener(openMap)
+        findViewById<View>(R.id.btnEmptyTrack).setOnClickListener(openTrack)
+        findViewById<View>(R.id.btnMore).setOnClickListener { showMoreMenu(it) }
+        btnFit.setOnClickListener { overlay.fitView(animate = true) }
+        findViewById<View>(R.id.btnSplitsClose).setOnClickListener { hideSplits() }
+        // Les panneaux flottants cachent une partie de la carte : on le signale à la vue.
+        root.viewTreeObserver.addOnGlobalLayoutListener { updateInsets() }
 
         overlay.listener = this
         btnMap.setOnClickListener { overlay.mode = OverlayView.Mode.MAP }
@@ -110,15 +163,13 @@ class MainActivity : Activity(), OverlayView.Listener {
         findViewById<Button>(R.id.btnCtrlUndo).setOnClickListener { overlay.undoControl() }
         findViewById<Button>(R.id.btnCtrlClear).setOnClickListener {
             if (overlay.controls.isEmpty()) return@setOnClickListener
-            AlertDialog.Builder(this)
-                .setMessage("Effacer tous les postes ?")
-                .setPositiveButton("Effacer") { _, _ -> overlay.clearControls() }
-                .setNegativeButton("Annuler", null)
-                .show()
+            val saved = overlay.controls.map { it.copyOf() }
+            overlay.clearControls()
+            showSnack("Postes effacés", "Annuler") { overlay.setControls(saved) }
         }
         findViewById<Button>(R.id.btnSplits).setOnClickListener { showSplits() }
         findViewById<Button>(R.id.btnCtrlDone).setOnClickListener { overlay.mode = OverlayView.Mode.MAP }
-        findViewById<Button>(R.id.btnReplayDone).setOnClickListener { overlay.mode = OverlayView.Mode.MAP }
+        findViewById<View>(R.id.btnReplayDone).setOnClickListener { overlay.mode = OverlayView.Mode.MAP }
         btnPlay.setOnClickListener { overlay.replayPlaying = !overlay.replayPlaying }
         btnSpeed.setOnClickListener {
             val i = speeds.indexOfFirst { it == overlay.replaySpeed }
@@ -167,22 +218,19 @@ class MainActivity : Activity(), OverlayView.Listener {
 
     // ---------- Menu ----------
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main, menu)
-        return true
+    private fun showMoreMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menuInflater.inflate(R.menu.main, popup.menu)
+        popup.menu.findItem(R.id.speed_colors).isChecked = overlay.speedColors
+        popup.menu.findItem(R.id.lock_scale).isChecked = overlay.lockTraceScale
+        popup.menu.findItem(R.id.pdf_page).isVisible = mapIsPdf && mapPageCount > 1
+        popup.setOnMenuItemClickListener { onMenuItem(it) }
+        popup.show()
     }
 
-    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        menu.findItem(R.id.speed_colors).isChecked = overlay.speedColors
-        menu.findItem(R.id.lock_scale).isChecked = overlay.lockTraceScale
-        menu.findItem(R.id.pdf_page).isVisible = mapIsPdf && mapPageCount > 1
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+    /** Action d'un élément du menu « ⋮ ». */
+    fun onMenuItem(item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.open_map -> pick(REQ_MAP, arrayOf("image/*", "application/pdf"))
-            R.id.open_track -> pick(REQ_GPX, null)
             R.id.splits -> showSplits()
             R.id.map_scale -> showScaleDialog()
             R.id.pdf_page -> mapUri?.let { choosePdfPage(it, mapPageCount) }
@@ -191,10 +239,13 @@ class MainActivity : Activity(), OverlayView.Listener {
                 if (overlay.speedColors && overlay.track?.hasTimes == false) toast("Cette trace n'a pas d'horaires.")
                 refreshUi()
             }
-            R.id.lock_scale -> overlay.lockTraceScale = !overlay.lockTraceScale
+            R.id.lock_scale -> {
+                overlay.lockTraceScale = !overlay.lockTraceScale
+                toast(if (overlay.lockTraceScale) "Échelle de la trace verrouillée" else "Échelle de la trace libre")
+                refreshUi()
+            }
             R.id.trace_width -> showWidthDialog()
             R.id.reset_trace -> overlay.fitTraceToMap()
-            R.id.fit_view -> overlay.fitView()
             R.id.export -> {
                 if (overlay.mapBitmap == null) toast("Ouvrez d'abord une carte.")
                 else startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -203,9 +254,30 @@ class MainActivity : Activity(), OverlayView.Listener {
                     putExtra(Intent.EXTRA_TITLE, "carte_trace.jpg")
                 }, REQ_EXPORT)
             }
-            else -> return super.onOptionsItemSelected(item)
+            R.id.help -> showHelp()
+            else -> return false
         }
         return true
+    }
+
+    private fun showHelp() {
+        AlertDialog.Builder(this)
+            .setTitle("Comment ça marche")
+            .setMessage(
+                "1. Ouvrez la carte (image ou PDF) puis votre trace (GPX, FIT ou TCX).\n\n" +
+                    "2. Calez la trace sur la carte :\n" +
+                    "   • Ajuster : glissez la trace, tournez-la à deux doigts ;\n" +
+                    "   • Caler : touchez un point de la trace puis le même endroit sur la carte (2 fois ou plus) ;\n" +
+                    "   • ⋮ → Échelle : pour un PDF, la trace se met à la bonne taille.\n\n" +
+                    "3. Postes : touchez la carte pour placer le départ, les postes, puis l'arrivée. " +
+                    "Glissez un poste pour le déplacer, appui long pour le supprimer.\n\n" +
+                    "4. Temps : vos temps intermédiaires. Touchez une section pour la voir sur la carte.\n\n" +
+                    "5. Rejouer : revivez la course, à la vitesse de votre choix.\n\n" +
+                    "Astuces : double-tap pour zoomer, bouton ⤢ pour revoir toute la carte, " +
+                    "« Partager » un fichier vers Trace O depuis une autre app."
+            )
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     private fun pick(req: Int, mimes: Array<String>?) {
@@ -223,10 +295,22 @@ class MainActivity : Activity(), OverlayView.Listener {
         val uri = data?.data
         if (resultCode != RESULT_OK || uri == null) return
         when (requestCode) {
-            REQ_MAP -> { keepPermission(uri); openMap(uri, page = -1, refitTrace = true) }
-            REQ_GPX -> { keepPermission(uri); openGpx(uri, savedMatrix = null) }
+            REQ_MAP -> { keepPermission(uri); pendingMapName = displayName(uri); openMap(uri, page = -1, refitTrace = true) }
+            REQ_GPX -> { keepPermission(uri); pendingTrackName = displayName(uri); openGpx(uri, savedMatrix = null) }
             REQ_EXPORT -> exportTo(uri)
         }
+    }
+
+    private var pendingMapName: String? = null
+    private var pendingTrackName: String? = null
+
+    private fun displayName(uri: Uri): String? {
+        if (uri.scheme == "file") return uri.lastPathSegment?.substringAfter('_')
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
+            }
+        } catch (_: Exception) { null }
     }
 
     private fun keepPermission(uri: Uri) {
@@ -344,6 +428,8 @@ class MainActivity : Activity(), OverlayView.Listener {
                     val old = overlay.mapBitmap
                     val sameMap = uri == mapUri
                     mapUri = uri; mapIsPdf = m.isPdf; mapPage = m.page; mapPageCount = m.pageCount
+                    mapName = pendingMapName ?: (if (sameMap) mapName else null) ?: displayName(uri)
+                    pendingMapName = null
                     mapPxPerMm = m.pxPerMm
                     overlay.mapPxPerMm = m.pxPerMm
                     overlay.setMap(m.bitmap, refitTrace && savedMatrix == null)
@@ -354,7 +440,6 @@ class MainActivity : Activity(), OverlayView.Listener {
                     else if (!sameMap) overlay.setControls(emptyList())
                     pendingControls = null
                     if (old != null && old !== m.bitmap) old.recycle()
-                    invalidateOptionsMenu()
                     refreshUi()
                     saveSession()
                     if (refitTrace && overlay.track != null && savedMatrix == null) {
@@ -383,6 +468,9 @@ class MainActivity : Activity(), OverlayView.Listener {
                 runOnUiThread {
                     busy(false)
                     gpxUri = uri
+                    trackName = pendingTrackName ?: displayName(uri)
+                    pendingTrackName = null
+                    hideSplits()
                     if (overlay.mode == OverlayView.Mode.CALIBRATE || overlay.mode == OverlayView.Mode.REPLAY) {
                         overlay.mode = OverlayView.Mode.MAP
                     }
@@ -417,84 +505,135 @@ class MainActivity : Activity(), OverlayView.Listener {
         }
         val (punches, legs) = res
         val n = overlay.controls.size
-        val pad = (6 * resources.displayMetrics.density).toInt()
-        val table = TableLayout(this).apply {
-            setPadding(pad * 2, pad, pad * 2, pad)
-            isStretchAllColumns = true
-        }
-        fun cell(text: String, bold: Boolean = false, align: Int = Gravity.END) = TextView(this).apply {
-            this.text = text
-            textSize = 14f
-            gravity = align
-            setPadding(pad / 2, pad, pad / 2, pad)
-            setTextColor(0xFF222222.toInt())
-            if (bold) setTypeface(typeface, Typeface.BOLD)
-        }
-        table.addView(TableRow(this).apply {
-            addView(cell("Section", true, Gravity.START))
-            addView(cell("Temps", true)); addView(cell("Cumul", true))
-            addView(cell("Allure", true)); addView(cell("Dist.", true))
-        })
+        val dp = resources.displayMetrics.density
+        splitsList.removeAllViews()
         val paces = legs.mapNotNull { it.paceSecPerKm }
         val slow = if (paces.size >= 3) paces.max() else null
         val fast = if (paces.size >= 3) paces.min() else null
         val t0 = punches.first().timeMs
-        var dialog: AlertDialog? = null
-        for (leg in legs) {
-            val pace = leg.paceSecPerKm
-            val name = "${Splits.label(leg.from, n).take(3)}→${Splits.label(leg.to, n).take(3)}" + if (leg.sure) "" else " ?"
-            val cum = punches[leg.to].timeMs?.let { b -> t0?.let { formatDuration(b - it) } } ?: "—"
-            val row = TableRow(this).apply {
-                addView(cell(name, align = Gravity.START))
-                addView(cell(leg.timeMs?.let { formatDuration(it) } ?: "—", bold = true))
-                addView(cell(cum))
-                addView(cell(pace?.let { formatPace(it) } ?: "—"))
-                addView(cell(String.format(Locale.FRANCE, "%d m\n+%d %%", leg.runM.toInt(), leg.extraPercent.toInt())))
-                when (pace) {
-                    null -> {}
-                    slow -> setBackgroundColor(0xFFFFDCDC.toInt())
-                    fast -> setBackgroundColor(0xFFDDF3DD.toInt())
+        val rows = ArrayList<View>()
+        fun rowBackground(leg: Leg, selected: Boolean) = GradientDrawable().apply {
+            cornerRadius = 12 * dp
+            setColor(
+                when (leg.paceSecPerKm) {
+                    null -> getColor(R.color.surface)
+                    slow -> getColor(R.color.slow_bg)
+                    fast -> getColor(R.color.fast_bg)
+                    else -> getColor(R.color.surface)
                 }
-                isClickable = true
-                setOnClickListener {
-                    this@MainActivity.overlay.highlight(leg.fromIdx, leg.toIdx)
-                    hint.text = "Section ${Splits.label(leg.from, n)} → ${Splits.label(leg.to, n)} en bleu"
-                    dialog?.dismiss()
-                }
+            )
+            if (selected) setStroke((2 * dp).toInt(), getColor(R.color.highlight))
+        }
+        legs.forEachIndexed { li, leg ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding((10 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
+                background = rowBackground(leg, li == selectedLeg)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = (4 * dp).toInt() }
             }
-            table.addView(row)
+            val badge = TextView(this).apply {
+                text = "${Splits.label(leg.from, n).take(3)}\n→ ${Splits.label(leg.to, n).take(3)}"
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(getColor(R.color.course))
+                setTypeface(typeface, Typeface.BOLD)
+                background = GradientDrawable().apply { cornerRadius = 10 * dp; setColor(0x14A626FF) }
+                layoutParams = LinearLayout.LayoutParams((58 * dp).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+                setPadding(0, (6 * dp).toInt(), 0, (6 * dp).toInt())
+            }
+            val mid = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { marginStart = (12 * dp).toInt() }
+                addView(TextView(this@MainActivity).apply {
+                    text = (leg.timeMs?.let { formatDuration(it) } ?: "—") + if (leg.sure) "" else "  ?"
+                    textSize = 19f
+                    fontFeatureSettings = "tnum"
+                    setTextColor(getColor(R.color.ink))
+                    setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+                })
+                val cum = punches[leg.to].timeMs?.let { b -> t0?.let { formatDuration(b - it) } }
+                addView(TextView(this@MainActivity).apply {
+                    text = if (cum != null) "cumul $cum" else ""
+                    textSize = 12f
+                    fontFeatureSettings = "tnum"
+                    setTextColor(getColor(R.color.muted))
+                })
+            }
+            val right = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.END
+                addView(TextView(this@MainActivity).apply {
+                    text = leg.paceSecPerKm?.let { formatPace(it) } ?: "—"
+                    textSize = 15f
+                    fontFeatureSettings = "tnum"
+                    setTextColor(getColor(R.color.ink))
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = String.format(Locale.FRANCE, "%d m · +%d %%", leg.runM.toInt(), leg.extraPercent.toInt())
+                    textSize = 12f
+                    fontFeatureSettings = "tnum"
+                    setTextColor(getColor(R.color.muted))
+                })
+            }
+            row.addView(badge); row.addView(mid); row.addView(right)
+            row.isClickable = true
+            row.setOnClickListener {
+                selectedLeg = li
+                rows.forEachIndexed { k, r -> r.background = rowBackground(legs[k], k == li) }
+                overlay.highlight(leg.fromIdx, leg.toIdx)
+            }
+            rows.add(row)
+            splitsList.addView(row)
         }
         val total = legs.mapNotNull { it.timeMs }.takeIf { it.size == legs.size }?.sum()
         val totalRun = legs.sumOf { it.runM }
-        table.addView(TableRow(this).apply {
-            addView(cell("Total", true, Gravity.START))
-            addView(cell(total?.let { formatDuration(it) } ?: "—", true))
-            addView(cell(""))
-            addView(cell(if (total != null && totalRun > 10) formatPace(total / 1000.0 / (totalRun / 1000.0)) else "—"))
-            addView(cell(String.format(Locale.FRANCE, "%.2f km", totalRun / 1000)))
-        })
-        val note = TextView(this).apply {
+        splitsSummary.text = buildString {
+            append("Total ").append(total?.let { formatDuration(it) } ?: "—")
+            append(String.format(Locale.FRANCE, " · %.2f km", totalRun / 1000))
+            if (total != null && totalRun > 10) append(" · ").append(formatPace(total / 1000.0 / (totalRun / 1000.0)))
+        }
+        splitsList.addView(TextView(this).apply {
             textSize = 12f
-            setPadding(pad * 2, pad, pad * 2, pad * 2)
+            setTextColor(getColor(R.color.muted))
+            setPadding((6 * dp).toInt(), (10 * dp).toInt(), (6 * dp).toInt(), 0)
             text = buildString {
-                append("Touchez une section pour la voir sur la carte. Rouge = section la plus lente, vert = la plus rapide (allure). ")
+                append("Touchez une section pour la voir en bleu sur la carte. ")
+                append("Rouge = section la plus lente, vert = la plus rapide (allure). ")
                 append("« +% » = distance en plus par rapport à la ligne droite.")
                 if (legs.any { !it.sure }) {
                     append("\n? = passage à moins de ${Splits.DEFAULT_RADIUS_M.toInt()} m non trouvé : vérifiez le calage ou la position du poste.")
                 }
                 if (this@MainActivity.overlay.track?.hasTimes == false) append("\nCette trace n'a pas d'horaires : seules les distances sont connues.")
             }
+        })
+        // Le panneau prend au plus la moitié de l'écran : la carte reste visible au-dessus.
+        val maxH = (root.height * 0.45f).toInt().coerceAtLeast((200 * dp).toInt())
+        splitsList.measure(
+            View.MeasureSpec.makeMeasureSpec(root.width.coerceAtLeast(1), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        splitsScroll.layoutParams = splitsScroll.layoutParams.apply {
+            height = if (splitsList.measuredHeight > maxH) maxH else ViewGroup.LayoutParams.WRAP_CONTENT
         }
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(table); addView(note)
-        }
-        dialog = AlertDialog.Builder(this)
-            .setTitle("Temps intermédiaires")
-            .setView(ScrollView(this).apply { addView(box) })
-            .setPositiveButton("Fermer", null)
-            .show()
+        splitsSheet.visibility = View.VISIBLE
+        splitsSheet.translationY = (60 * dp)
+        splitsSheet.alpha = 0f
+        splitsSheet.animate().translationY(0f).alpha(1f).setDuration(220).start()
+        bottomPanel.visibility = View.GONE
     }
+
+    private fun hideSplits() {
+        if (splitsSheet.visibility != View.VISIBLE) return
+        splitsSheet.visibility = View.GONE
+        selectedLeg = -1
+        overlay.clearHighlight()
+        refreshUi()
+    }
+
+    val splitsVisible: Boolean get() = splitsSheet.visibility == View.VISIBLE
 
     // ---------- Replay ----------
 
@@ -503,6 +642,7 @@ class MainActivity : Activity(), OverlayView.Listener {
         if (t == null) { toast("Ouvrez d'abord une trace."); return }
         if (t.timedIdx.size < 2) { toast("Cette trace n'a pas d'horaires : impossible de la rejouer."); return }
         replayPunches = computePunches()?.first ?: emptyList()
+        hideSplits()
         overlay.clearHighlight()
         overlay.mode = OverlayView.Mode.REPLAY
         if (overlay.replayTimeMs >= (t.endTimeMs ?: 0) || overlay.replayTimeMs < (t.startTimeMs ?: 0)) {
@@ -516,7 +656,9 @@ class MainActivity : Activity(), OverlayView.Listener {
         val a = t.startTimeMs ?: return
         val b = t.endTimeMs ?: return
         if (!userSeeking && b > a) replaySeek.progress = ((timeMs - a) * replaySeek.max / (b - a)).toInt()
-        btnPlay.text = if (playing) "⏸" else "▶"
+        btnPlay.setImageResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+        if (playing) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         btnSpeed.text = "×" + overlay.replaySpeed.toInt()
         if (overlay.mode != OverlayView.Mode.REPLAY) return
         // Temps de course : depuis le départ s'il est placé, sinon depuis le début de la trace.
@@ -625,6 +767,8 @@ class MainActivity : Activity(), OverlayView.Listener {
             .putString("mapUri", mapUri?.toString())
             .putInt("mapPage", mapPage)
             .putString("gpxUri", gpxUri?.toString())
+            .putString("mapName", mapName)
+            .putString("trackName", trackName)
             .putString("traceMatrix", v.joinToString(","))
             .putString("controls", overlay.controls.joinToString(";") { "${it[0]},${it[1]}" })
             .putString("controlsMap", mapUri?.toString())
@@ -648,6 +792,8 @@ class MainActivity : Activity(), OverlayView.Listener {
             if (xy.size == 2) floatArrayOf(xy[0], xy[1]) else null
         }
         pendingControlsMap = prefs.getString("controlsMap", null)
+        pendingMapName = prefs.getString("mapName", null)
+        pendingTrackName = prefs.getString("trackName", null)
         // Les chargements passent par le même fil, dans l'ordre : trace puis carte.
         if (gpx != null) openGpx(gpx, matrix)
         if (map != null) openMap(map, page, refitTrace = false, savedMatrix = matrix)
@@ -661,6 +807,17 @@ class MainActivity : Activity(), OverlayView.Listener {
 
     private fun refreshUi() {
         val mode = overlay.mode
+        val t = overlay.track
+        val nothing = t == null && overlay.mapBitmap == null
+        emptyState.visibility = if (nothing) View.VISIBLE else View.GONE
+        val sheet = splitsVisible
+        bottomPanel.visibility = if (nothing || sheet) View.GONE else View.VISIBLE
+        btnFit.visibility = if (nothing) View.GONE else View.VISIBLE
+        // Sur l'accueil, les gros boutons suffisent : on allège la barre du haut.
+        findViewById<View>(R.id.btnOpenMap).visibility = if (nothing) View.GONE else View.VISIBLE
+        findViewById<View>(R.id.btnOpenTrack).visibility = if (nothing) View.GONE else View.VISIBLE
+        subtitle.text = listOfNotNull(mapName, trackName).joinToString("  ·  ").ifEmpty { "Trace GPS sur carte de CO" }
+
         modeBar.visibility = if (mode == OverlayView.Mode.MAP || mode == OverlayView.Mode.TRACE) View.VISIBLE else View.GONE
         calibBar.visibility = if (mode == OverlayView.Mode.CALIBRATE) View.VISIBLE else View.GONE
         controlsBar.visibility = if (mode == OverlayView.Mode.CONTROLS) View.VISIBLE else View.GONE
@@ -671,43 +828,95 @@ class MainActivity : Activity(), OverlayView.Listener {
         styleButton(btnControls, false)
         styleButton(btnReplay, false)
 
-        val t = overlay.track
-        stats.text = if (t == null) "Aucune trace" else buildString {
-            append(String.format(Locale.FRANCE, "%.2f km", t.distanceM / 1000))
-            t.durationMs?.let { append(" · ").append(formatDuration(it)) }
-            t.paceSecPerKm?.let { append(" · ").append(formatPace(it)) }
-            if (overlay.speedColors && t.hasTimes) append("  (rouge = lent, vert = rapide)")
+        statsRow.visibility = if (t == null) View.GONE else View.VISIBLE
+        if (t != null) {
+            statDist.text = String.format(Locale.FRANCE, "%.2f km", t.distanceM / 1000)
+            statTime.text = t.durationMs?.let { formatDuration(it) } ?: "—"
+            statPace.text = t.paceSecPerKm?.let { formatPace(it) } ?: "—"
         }
+        legend.visibility = if (t != null && overlay.speedColors && t.hasTimes) View.VISIBLE else View.GONE
+
+        val replay = mode == OverlayView.Mode.REPLAY
+        hint.textSize = if (replay) 15f else 13f
+        hint.setTextColor(getColor(if (replay) R.color.ink else R.color.muted))
+        hint.fontFeatureSettings = if (replay) "tnum" else null
         hint.text = when (mode) {
-            OverlayView.Mode.MAP -> "Glisser : déplacer · Pincer : zoomer"
-            OverlayView.Mode.TRACE -> "Glisser : déplacer la trace · Deux doigts : tourner" +
-                if (overlay.lockTraceScale) " (échelle verrouillée)" else " / agrandir"
+            OverlayView.Mode.MAP -> when {
+                overlay.mapBitmap == null -> "Ouvrez la carte de la course avec « Carte »."
+                t == null -> "Ouvrez votre trace avec « Trace »."
+                else -> "Glisser pour déplacer · pincer ou double-tap pour zoomer"
+            }
+            OverlayView.Mode.TRACE -> "Glissez la trace · deux doigts pour la tourner" +
+                if (overlay.lockTraceScale) " (échelle verrouillée)" else " ou l'agrandir"
             OverlayView.Mode.CALIBRATE -> {
                 val n = overlay.calibrationCount
-                val step = if (overlay.waitingForMapPoint) "2) Touchez l'endroit correspondant sur la carte"
-                else "1) Touchez un point reconnaissable de la trace"
-                "$step · $n point(s)" + if (n < 2) " — 2 minimum pour caler" else ""
+                val step = if (overlay.waitingForMapPoint) "② Touchez le même endroit sur la carte"
+                else "① Touchez un point reconnaissable de la trace"
+                "$step\n$n point(s) calé(s)" + if (n < 2) " — 2 minimum" else " — la trace est calée"
             }
             OverlayView.Mode.CONTROLS -> {
                 val n = overlay.controls.size
-                val next = when (n) { 0 -> "le départ"; else -> "le poste $n (ou l'arrivée)" }
-                "Touchez la carte pour placer $next · Glisser un poste pour le déplacer · Le dernier = arrivée"
+                val next = if (n == 0) "le départ ▲" else "le poste $n (ou l'arrivée ◎)"
+                "Touchez la carte pour placer $next\nGlisser : déplacer · appui long : supprimer"
             }
             OverlayView.Mode.REPLAY -> hint.text
         }
-        if (mode == OverlayView.Mode.REPLAY) onReplayTick(overlay.replayTimeMs, overlay.replayPlaying)
+        if (replay) onReplayTick(overlay.replayTimeMs, overlay.replayPlaying)
+        root.post { updateInsets() }
     }
 
-    /** Bouton sélectionné : fond plein magenta et texte blanc ; sinon fond transparent. */
+    /** Signale à la carte la place prise par les panneaux, et place le bouton ⤢ au-dessus du panneau du bas. */
+    private fun updateInsets() {
+        if (root.height == 0) return
+        val dp = resources.displayMetrics.density
+        val bottomView = when {
+            splitsVisible -> splitsSheet
+            bottomPanel.visibility == View.VISIBLE -> bottomPanel
+            else -> null
+        }
+        val bottomTop = bottomView?.let { it.top + it.translationY } ?: root.height.toFloat()
+        overlay.setInsets(topBar.bottom.toFloat(), root.height - bottomTop)
+        btnFit.translationY = -(root.height - bottomTop) - 4 * dp
+    }
+
+    private fun showSnack(msg: String, action: String?, onAction: (() -> Unit)?) {
+        handler.removeCallbacks(hideSnack)
+        snackText.text = msg
+        snackAction.visibility = if (action != null) View.VISIBLE else View.GONE
+        snackAction.text = action
+        snackAction.setOnClickListener { onAction?.invoke(); snackbar.visibility = View.GONE }
+        snackbar.visibility = View.VISIBLE
+        snackbar.alpha = 0f
+        snackbar.animate().alpha(1f).setDuration(150).start()
+        handler.postDelayed(hideSnack, 4500)
+    }
+
+    override fun onControlRemoved(index: Int, position: FloatArray) {
+        showSnack("Poste supprimé", "Annuler") { overlay.restoreControl(index, position) }
+    }
+
+    @Deprecated("Gestion simple du retour")
+    override fun onBackPressed() {
+        when {
+            splitsVisible -> hideSplits()
+            snackbar.visibility == View.VISIBLE -> snackbar.visibility = View.GONE
+            overlay.mode != OverlayView.Mode.MAP -> overlay.mode = OverlayView.Mode.MAP
+            else -> @Suppress("DEPRECATION") super.onBackPressed()
+        }
+    }
+
+    /** Mode sélectionné : pastille orange pâle, icône et texte orange. */
     private fun styleButton(b: Button, selected: Boolean) {
-        val radius = 8 * resources.displayMetrics.density
+        val radius = 14 * resources.displayMetrics.density
         val content = GradientDrawable().apply {
-            setColor(if (selected) getColor(R.color.mode_selected) else 0x00000000)
+            setColor(if (selected) getColor(R.color.accent_soft) else 0x00000000)
             cornerRadius = radius
         }
         val mask = GradientDrawable().apply { setColor(0xFFFFFFFF.toInt()); cornerRadius = radius }
-        b.background = RippleDrawable(ColorStateList.valueOf(0x33000000), content, mask)
-        b.setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF333333.toInt())
+        b.background = RippleDrawable(ColorStateList.valueOf(0x22000000), content, mask)
+        val c = getColor(if (selected) R.color.accent else R.color.ink)
+        b.setTextColor(c)
+        b.compoundDrawableTintList = ColorStateList.valueOf(c)
     }
 
     private fun formatDuration(ms: Long): String {
@@ -721,7 +930,7 @@ class MainActivity : Activity(), OverlayView.Listener {
         return String.format(Locale.FRANCE, "%d'%02d\"/km", s / 60, s % 60)
     }
 
-    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    private fun toast(msg: String) = showSnack(msg, null, null)
 
     companion object {
         private const val REQ_MAP = 1

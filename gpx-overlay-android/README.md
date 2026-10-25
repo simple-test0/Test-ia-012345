@@ -30,6 +30,9 @@ sur une **carte de course d'orientation**, fournie en **image** (JPEG, PNG, WebP
 - Départ (triangle) et arrivée (double cercle).
 - Distance, temps et allure moyenne (min/km).
 - Export de la carte avec la trace en image JPEG.
+- Interface pensée pour le téléphone : carte en plein écran, panneaux flottants, double-tap pour
+  zoomer, bouton ⤢ pour revoir toute la carte, déplacements animés, retour (◁) pour quitter le
+  mode en cours, « Annuler » après un effacement, vibrations légères, écran allumé pendant le replay.
 - La dernière carte, la dernière trace et le calage sont conservés à la réouverture.
 
 ## Récupérer l'APK depuis le téléphone

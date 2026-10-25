@@ -20,8 +20,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import org.robolectric.fakes.RoboMenuItem
-import org.robolectric.shadows.ShadowAlertDialog
 import org.robolectric.shadows.ShadowSystemClock
 import java.time.Duration
 import java.io.File
@@ -48,8 +46,8 @@ class MainActivityTest {
         assertTrue("délai dépassé", cond())
     }
 
-    private fun openVia(activity: MainActivity, menuId: Int, file: File) {
-        activity.onOptionsItemSelected(RoboMenuItem(menuId))
+    private fun openVia(activity: MainActivity, buttonId: Int, file: File) {
+        activity.findViewById<android.view.View>(buttonId).performClick()
         val started = shadowOf(activity).nextStartedActivityForResult
         assertEquals(Intent.ACTION_OPEN_DOCUMENT, started.intent.action)
         shadowOf(activity).receiveResult(started.intent, Activity.RESULT_OK, Intent().setData(Uri.fromFile(file)))
@@ -80,17 +78,18 @@ class MainActivityTest {
         val overlay = activity.findViewById<OverlayView>(R.id.overlay)
         assertTrue(overlay.width > 0 && overlay.height > 0)
         screenshot(overlay, "0_vide")
+        screenshotRoot(activity, "ecran_accueil")
 
-        openVia(activity, R.id.open_map, resourceFile("carte_test.jpg"))
+        openVia(activity, R.id.btnOpenMap, resourceFile("carte_test.jpg"))
         waitFor { overlay.mapBitmap != null }
-        openVia(activity, R.id.open_track, resourceFile("trace_test.gpx"))
+        openVia(activity, R.id.btnOpenTrack, resourceFile("trace_test.gpx"))
         waitFor { overlay.track != null }
         assertEquals(241, overlay.track!!.points.size)
         screenshot(overlay, "1_charge")
 
         // Le texte des stats est rempli.
         screenshotRoot(activity, "ecran_principal")
-        val stats = activity.findViewById<android.widget.TextView>(R.id.stats).text.toString()
+        val stats = activity.findViewById<android.widget.TextView>(R.id.statDist).text.toString()
         assertTrue(stats, stats.contains("km"))
 
         // Mode « Ajuster trace » : un glissé déplace la trace.
@@ -184,9 +183,9 @@ class MainActivityTest {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
         val overlay = activity.findViewById<OverlayView>(R.id.overlay)
-        openVia(activity, R.id.open_map, resourceFile("carte_test.jpg"))
+        openVia(activity, R.id.btnOpenMap, resourceFile("carte_test.jpg"))
         waitFor { overlay.mapBitmap != null }
-        openVia(activity, R.id.open_track, resourceFile("trace_test.gpx"))
+        openVia(activity, R.id.btnOpenTrack, resourceFile("trace_test.gpx"))
         waitFor { overlay.track != null }
         val t = overlay.track!!
 
@@ -227,19 +226,17 @@ class MainActivityTest {
         assertEquals(listOf(0, 60, 120, 180), punches.take(4).map { it.pointIndex })
         assertTrue(punches.all { it.sure })
         activity.findViewById<android.widget.Button>(R.id.btnSplits).performClick()
-        val dialog = ShadowAlertDialog.getLatestAlertDialog()
-        assertNotNull(dialog)
-        assertTrue(dialog.isShowing)
-        val dw = dialog.window!!.decorView
-        dw.measure(
-            android.view.View.MeasureSpec.makeMeasureSpec(380, android.view.View.MeasureSpec.EXACTLY),
-            android.view.View.MeasureSpec.makeMeasureSpec(700, android.view.View.MeasureSpec.AT_MOST),
-        )
-        dw.layout(0, 0, dw.measuredWidth, dw.measuredHeight)
-        val db = Bitmap.createBitmap(dw.measuredWidth, dw.measuredHeight, Bitmap.Config.ARGB_8888)
-        dw.draw(Canvas(db))
-        File("build/test-screens/ecran_temps.png").outputStream().use { db.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        dialog.dismiss()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(activity.splitsVisible)
+        val list = activity.findViewById<android.widget.LinearLayout>(R.id.splitsList)
+        assertEquals(5, list.childCount) // 4 sections + la note
+        // Toucher une section la met en évidence et le panneau reste ouvert.
+        list.getChildAt(1).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(activity.splitsVisible)
+        screenshotRoot(activity, "ecran_temps")
+        activity.onBackPressed()
+        assertTrue(!activity.splitsVisible)
         activity.findViewById<android.widget.Button>(R.id.btnCtrlDone).performClick()
 
         // Replay.
@@ -248,7 +245,7 @@ class MainActivityTest {
         overlay.setReplayTime(punches[1].timeMs!! + 3_000)
         val hint = activity.findViewById<android.widget.TextView>(R.id.hint).text.toString()
         assertTrue(hint, hint.contains("1 → 2"))
-        activity.findViewById<android.widget.Button>(R.id.btnPlay).performClick()
+        activity.findViewById<android.view.View>(R.id.btnPlay).performClick()
         assertTrue(overlay.replayPlaying)
         val before = overlay.replayTimeMs
         screenshot(overlay, "4_replay")
@@ -256,7 +253,8 @@ class MainActivityTest {
         screenshot(overlay, "4_replay")
         screenshotRoot(activity, "ecran_replay")
         assertTrue(overlay.replayTimeMs > before)
-        activity.findViewById<android.widget.Button>(R.id.btnReplayDone).performClick()
+        activity.onBackPressed()
+        assertEquals(OverlayView.Mode.MAP, overlay.mode)
         assertTrue(!overlay.replayPlaying)
 
         // Les postes sont sauvegardés avec la session.

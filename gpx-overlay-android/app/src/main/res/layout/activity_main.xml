@@ -1,115 +1,451 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:background="@color/map_bg">
 
-    <FrameLayout
+    <com.orienteering.gpxoverlay.OverlayView
+        android:id="@+id/overlay"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_height="match_parent" />
 
-        <com.orienteering.gpxoverlay.OverlayView
-            android:id="@+id/overlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-
-        <ProgressBar
-            android:id="@+id/progress"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:visibility="gone" />
-    </FrameLayout>
-
-    <TextView
-        android:id="@+id/stats"
+    <!-- Barre du haut -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        style="@style/Card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#F2F2F2"
-        android:paddingHorizontal="12dp"
-        android:paddingTop="6dp"
-        android:textColor="#222222"
-        android:textSize="14sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="#F2F2F2"
-        android:paddingHorizontal="12dp"
-        android:paddingBottom="4dp"
-        android:textColor="#555555"
-        android:textSize="13sp" />
-
-    <!-- Barre des modes -->
-    <LinearLayout
-        android:id="@+id/modeBar"
-        style="@style/BottomBar">
-
-        <Button android:id="@+id/btnMap" style="@style/BarButton" android:text="@string/mode_map" />
-        <Button android:id="@+id/btnTrace" style="@style/BarButton" android:text="@string/mode_trace" />
-        <Button android:id="@+id/btnCalib" style="@style/BarButton" android:text="@string/mode_calib" />
-        <Button android:id="@+id/btnControls" style="@style/BarButton" android:text="@string/mode_controls" />
-        <Button android:id="@+id/btnReplay" style="@style/BarButton" android:text="@string/mode_replay" />
-    </LinearLayout>
-
-    <!-- Calage par points -->
-    <LinearLayout
-        android:id="@+id/calibBar"
-        style="@style/BottomBar"
-        android:visibility="gone">
-
-        <Button android:id="@+id/btnUndo" style="@style/BarButton" android:text="@string/undo" />
-        <Button android:id="@+id/btnDone" style="@style/BarButton" android:text="@string/done" />
-    </LinearLayout>
-
-    <!-- Postes -->
-    <LinearLayout
-        android:id="@+id/controlsBar"
-        style="@style/BottomBar"
-        android:visibility="gone">
-
-        <Button android:id="@+id/btnCtrlUndo" style="@style/BarButton" android:text="@string/undo" />
-        <Button android:id="@+id/btnCtrlClear" style="@style/BarButton" android:text="@string/clear" />
-        <Button android:id="@+id/btnSplits" style="@style/BarButton" android:text="@string/splits_short" />
-        <Button android:id="@+id/btnCtrlDone" style="@style/BarButton" android:text="@string/done" />
-    </LinearLayout>
-
-    <!-- Replay -->
-    <LinearLayout
-        android:id="@+id/replayBar"
-        style="@style/BottomBar"
+        android:layout_gravity="top"
+        android:layout_margin="10dp"
         android:gravity="center_vertical"
-        android:visibility="gone">
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="4dp"
+        android:paddingBottom="8dp">
+
+        <ImageView
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_flag" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:text="@string/app_name"
+                android:textColor="@color/ink"
+                android:textSize="17sp" />
+
+            <TextView
+                android:id="@+id/subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="middle"
+                android:singleLine="true"
+                android:textColor="@color/muted"
+                android:textSize="12sp" />
+        </LinearLayout>
 
         <Button
-            android:id="@+id/btnPlay"
-            style="@style/BarButton"
-            android:layout_width="56dp"
-            android:layout_weight="0"
-            android:text="▶" />
+            android:id="@+id/btnOpenMap"
+            style="@style/TopButton"
+            android:drawableStart="@drawable/ic_map"
+            android:text="@string/open_map" />
 
-        <SeekBar
-            android:id="@+id/replaySeek"
+        <Button
+            android:id="@+id/btnOpenTrack"
+            style="@style/TopButton"
+            android:drawableStart="@drawable/ic_route"
+            android:text="@string/open_track" />
+
+        <ImageButton
+            android:id="@+id/btnMore"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="2dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/more"
+            android:src="@drawable/ic_more"
+            android:tint="@color/ink" />
+    </LinearLayout>
+
+    <!-- Accueil (rien d'ouvert) -->
+    <LinearLayout
+        android:id="@+id/emptyState"
+        style="@style/Card"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginHorizontal="24dp"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <ImageView
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_flag" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="@string/welcome_title"
+            android:textColor="@color/ink"
+            android:textSize="20sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:lineSpacingMultiplier="1.15"
+            android:text="@string/welcome_text"
+            android:textColor="@color/muted"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnEmptyMap"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/bg_primary"
+            android:drawableStart="@drawable/ic_map"
+            android:drawableTint="#FFFFFF"
+            android:fontFamily="sans-serif-medium"
+            android:paddingHorizontal="18dp"
+            android:text="@string/open_map_long"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btnEmptyTrack"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_secondary"
+            android:drawableStart="@drawable/ic_route"
+            android:drawableTint="@color/ink"
+            android:fontFamily="sans-serif-medium"
+            android:paddingHorizontal="18dp"
+            android:text="@string/open_track_long"
+            android:textAllCaps="false"
+            android:textColor="@color/ink"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center"
+            android:text="@string/welcome_tip"
+            android:textColor="@color/muted"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Bouton flottant « voir toute la carte » -->
+    <ImageButton
+        android:id="@+id/btnFit"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="end|bottom"
+        android:layout_marginEnd="14dp"
+        android:background="@drawable/bg_round_button"
+        android:contentDescription="@string/fit_view"
+        android:elevation="6dp"
+        android:src="@drawable/ic_fit"
+        android:tint="@color/ink" />
+
+    <ProgressBar
+        android:id="@+id/progress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:elevation="8dp"
+        android:indeterminateTint="@color/accent"
+        android:visibility="gone" />
+
+    <!-- Panneau du bas -->
+    <LinearLayout
+        android:id="@+id/bottomPanel"
+        style="@style/Card"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_margin="10dp"
+        android:orientation="vertical"
+        android:paddingTop="10dp"
+        android:paddingBottom="4dp">
+
+        <!-- Statistiques -->
+        <LinearLayout
+            android:id="@+id/statsRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="16dp">
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                <TextView android:id="@+id/statDist" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_distance" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                <TextView android:id="@+id/statTime" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_time" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1.2" android:orientation="vertical">
+                <TextView android:id="@+id/statPace" style="@style/StatValue" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/stat_pace" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/legend"
+                android:layout_width="64dp"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <View android:layout_width="match_parent" android:layout_height="6dp" android:background="@drawable/speed_legend" />
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:orientation="horizontal">
+                    <TextView style="@style/StatLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/slow" />
+                    <TextView style="@style/StatLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/fast" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingMultiplier="1.1"
+            android:paddingHorizontal="16dp"
+            android:textColor="@color/muted"
+            android:textSize="13sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="8dp"
+            android:background="@color/line" />
+
+        <!-- Barre des modes -->
+        <LinearLayout
+            android:id="@+id/modeBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp"
+            android:paddingTop="4dp">
+
+            <Button android:id="@+id/btnMap" style="@style/BarButton" android:drawableTop="@drawable/ic_explore" android:text="@string/mode_map" />
+            <Button android:id="@+id/btnTrace" style="@style/BarButton" android:drawableTop="@drawable/ic_move" android:text="@string/mode_trace" />
+            <Button android:id="@+id/btnCalib" style="@style/BarButton" android:drawableTop="@drawable/ic_target" android:text="@string/mode_calib" />
+            <Button android:id="@+id/btnControls" style="@style/BarButton" android:drawableTop="@drawable/ic_course" android:text="@string/mode_controls" />
+            <Button android:id="@+id/btnReplay" style="@style/BarButton" android:drawableTop="@drawable/ic_replay" android:text="@string/mode_replay" />
+        </LinearLayout>
+
+        <!-- Calage par points -->
+        <LinearLayout
+            android:id="@+id/calibBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp"
+            android:paddingTop="4dp"
+            android:visibility="gone">
+
+            <Button android:id="@+id/btnUndo" style="@style/BarButton" android:drawableTop="@drawable/ic_undo" android:text="@string/undo" />
+            <Button android:id="@+id/btnDone" style="@style/BarButton" android:drawableTop="@drawable/ic_check" android:text="@string/done" />
+        </LinearLayout>
+
+        <!-- Postes -->
+        <LinearLayout
+            android:id="@+id/controlsBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp"
+            android:paddingTop="4dp"
+            android:visibility="gone">
+
+            <Button android:id="@+id/btnCtrlUndo" style="@style/BarButton" android:drawableTop="@drawable/ic_undo" android:text="@string/undo" />
+            <Button android:id="@+id/btnCtrlClear" style="@style/BarButton" android:drawableTop="@drawable/ic_delete" android:text="@string/clear" />
+            <Button android:id="@+id/btnSplits" style="@style/BarButton" android:drawableTop="@drawable/ic_list" android:text="@string/splits_short" />
+            <Button android:id="@+id/btnCtrlDone" style="@style/BarButton" android:drawableTop="@drawable/ic_check" android:text="@string/done" />
+        </LinearLayout>
+
+        <!-- Replay -->
+        <LinearLayout
+            android:id="@+id/replayBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="8dp"
+            android:visibility="gone">
+
+            <ImageButton
+                android:id="@+id/btnPlay"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_play"
+                android:contentDescription="@string/play"
+                android:elevation="2dp"
+                android:src="@drawable/ic_play"
+                android:tint="#FFFFFF" />
+
+            <SeekBar
+                android:id="@+id/replaySeek"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:max="1000"
+                android:progressTint="@color/accent"
+                android:thumbTint="@color/accent" />
+
+            <Button
+                android:id="@+id/btnSpeed"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_chip"
+                android:fontFamily="sans-serif-medium"
+                android:minWidth="56dp"
+                android:minHeight="0dp"
+                android:paddingHorizontal="10dp"
+                android:text="×10"
+                android:textAllCaps="false"
+                android:textColor="@color/ink"
+                android:textSize="15sp" />
+
+            <ImageButton
+                android:id="@+id/btnReplayDone"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="4dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/done"
+                android:src="@drawable/ic_close"
+                android:tint="@color/ink" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Panneau des temps intermédiaires -->
+    <LinearLayout
+        android:id="@+id/splitsSheet"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/bg_sheet"
+        android:elevation="12dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <View
+            android:layout_width="36dp"
+            android:layout_height="5dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_handle" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="18dp"
+            android:paddingEnd="6dp">
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/splits"
+                    android:textColor="@color/ink"
+                    android:textSize="18sp" />
+                <TextView
+                    android:id="@+id/splitsSummary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFeatureSettings="tnum"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnSplitsClose"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/close"
+                android:src="@drawable/ic_close"
+                android:tint="@color/ink" />
+        </LinearLayout>
+
+        <ScrollView
+            android:id="@+id/splitsScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:id="@+id/splitsList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="10dp"
+                android:paddingBottom="12dp" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- Message temporaire avec action -->
+    <LinearLayout
+        android:id="@+id/snackbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_margin="16dp"
+        android:background="@drawable/bg_snackbar"
+        android:elevation="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="4dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/snackText"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:max="1000" />
+            android:paddingVertical="14dp"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
 
         <Button
-            android:id="@+id/btnSpeed"
-            style="@style/BarButton"
-            android:layout_width="64dp"
-            android:layout_weight="0"
-            android:text="×10" />
-
-        <Button
-            android:id="@+id/btnReplayDone"
-            style="@style/BarButton"
+            android:id="@+id/snackAction"
+            style="@android:style/Widget.Material.Button.Borderless"
             android:layout_width="wrap_content"
-            android:layout_weight="0"
-            android:text="@string/done" />
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:textColor="#FFB38A"
+            android:textSize="14sp" />
     </LinearLayout>
-</LinearLayout>
+</FrameLayout>

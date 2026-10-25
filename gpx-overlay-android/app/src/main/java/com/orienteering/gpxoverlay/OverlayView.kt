@@ -1,5 +1,6 @@
 package com.orienteering.gpxoverlay
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -10,9 +11,11 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.animation.DecelerateInterpolator
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -37,6 +40,23 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         fun onStateChanged()
         fun onMessage(msg: String)
         fun onReplayTick(timeMs: Long, playing: Boolean) {}
+        /** Un poste a été supprimé par appui long (pour proposer « Annuler »). */
+        fun onControlRemoved(index: Int, position: FloatArray) {}
+    }
+
+    /** Hauteur cachée par les panneaux en haut et en bas (px) : la carte se cadre entre les deux. */
+    var insetTop = 0f
+        private set
+    var insetBottom = 0f
+        private set
+    /** Vrai dès que l'utilisateur a déplacé ou zoomé la carte lui-même. */
+    private var userMovedView = false
+
+    /** Met à jour la place prise par les panneaux ; recadre si l'utilisateur n'a pas bougé la carte. */
+    fun setInsets(top: Float, bottom: Float) {
+        if (top == insetTop && bottom == insetBottom) return
+        insetTop = top; insetBottom = bottom
+        if (!userMovedView && highlightFrom < 0 && mode != Mode.REPLAY) fitView(animate = isLaidOut)
     }
 
     var listener: Listener? = null
@@ -122,7 +142,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; color = Color.argb(150, 255, 255, 255)
     }
     private val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; color = Color.rgb(200, 0, 160)
+        style = Paint.Style.STROKE; color = COURSE_COLOR
     }
     private val coursePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; color = COURSE_COLOR
@@ -131,7 +151,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         color = COURSE_COLOR; textAlign = Paint.Align.LEFT; isFakeBoldText = true
     }
     private val dashPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; color = Color.rgb(0, 90, 255)
+        style = Paint.Style.STROKE; color = HIGHLIGHT
         pathEffect = DashPathEffect(floatArrayOf(10f, 8f), 0f)
     }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -175,26 +195,76 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         return max(width, 1).toFloat() to max(height, 1).toFloat()
     }
 
-    /** Recadre la vue pour voir toute la carte. */
-    fun fitView() {
+    private val visibleH: Float get() = max(height - insetTop - insetBottom, height * 0.3f)
+    private val visibleCy: Float get() = insetTop + visibleH / 2
+
+    /** Recadre la vue pour voir toute la carte (entre les panneaux). */
+    fun fitView(animate: Boolean = false) {
         if (width == 0 || height == 0) return
         val (cw, ch) = contentSize()
-        val s = min(width / cw, height / ch)
-        viewMatrix.setScale(s, s)
-        viewMatrix.postTranslate((width - cw * s) / 2, (height - ch * s) / 2)
-        invalidate()
+        val pad = 8 * density
+        val s = min((width - 2 * pad) / cw, (visibleH - 2 * pad) / ch)
+        val m = Matrix().apply {
+            setScale(s, s)
+            postTranslate((width - cw * s) / 2, visibleCy - ch * s / 2)
+        }
+        setView(m, animate)
+        userMovedView = false
     }
 
     /** Recadre la vue sur un rectangle en pixels de carte. */
-    private fun fitViewTo(x0: Float, y0: Float, x1: Float, y1: Float) {
+    private fun fitViewTo(x0: Float, y0: Float, x1: Float, y1: Float, animate: Boolean = true) {
         if (width == 0 || height == 0) return
         val w = max(x1 - x0, 1f) * 1.3f
         val h = max(y1 - y0, 1f) * 1.3f
+        val s = min(min(width / w, visibleH / h), 12f * density).coerceAtLeast(minScale())
+        val m = Matrix().apply {
+            setScale(s, s)
+            postTranslate(width / 2f - (x0 + x1) / 2 * s, visibleCy - (y0 + y1) / 2 * s)
+        }
+        setView(m, animate)
+    }
+
+    private fun minScale(): Float {
         val (cw, ch) = contentSize()
-        val s = min(min(width / w, height / h), 12f * density).coerceAtLeast(0.3f * min(width / cw, height / ch))
-        viewMatrix.setScale(s, s)
-        viewMatrix.postTranslate(width / 2f - (x0 + x1) / 2 * s, height / 2f - (y0 + y1) / 2 * s)
-        invalidate()
+        return 0.3f * min(width / cw, height / ch)
+    }
+
+    private var cameraAnim: ValueAnimator? = null
+
+    /** Change la vue, avec une petite animation fluide si [animate]. */
+    private fun setView(target: Matrix, animate: Boolean) {
+        cameraAnim?.cancel()
+        if (!animate || !isLaidOut) { viewMatrix.set(target); invalidate(); return }
+        val a = FloatArray(9).also { viewMatrix.getValues(it) }
+        val b = FloatArray(9).also { target.getValues(it) }
+        cameraAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 280
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                val f = it.animatedValue as Float
+                // Interpolation de l'échelle en logarithme : le zoom paraît régulier.
+                val s = (a[Matrix.MSCALE_X] * Math.pow((b[Matrix.MSCALE_X] / a[Matrix.MSCALE_X]).toDouble(), f.toDouble())).toFloat()
+                // Point de la carte qui reste au centre de l'écran pendant l'animation.
+                val cx = width / 2f; val cy = visibleCy
+                val ax = (cx - a[Matrix.MTRANS_X]) / a[Matrix.MSCALE_X]; val ay = (cy - a[Matrix.MTRANS_Y]) / a[Matrix.MSCALE_X]
+                val bx = (cx - b[Matrix.MTRANS_X]) / b[Matrix.MSCALE_X]; val by = (cy - b[Matrix.MTRANS_Y]) / b[Matrix.MSCALE_X]
+                val mx = ax + (bx - ax) * f; val my = ay + (by - ay) * f
+                viewMatrix.setScale(s, s)
+                viewMatrix.postTranslate(cx - mx * s, cy - my * s)
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    /** Zoom animé autour d'un point de l'écran. */
+    fun zoomBy(factor: Float, px: Float, py: Float) {
+        val cur = viewScale()
+        val f = (cur * factor).coerceIn(minScale(), 12f * density) / cur
+        val m = Matrix(viewMatrix).apply { postScale(f, f, px, py) }
+        setView(m, true)
+        userMovedView = true
     }
 
     /** Place la trace au centre de la carte, nord en haut, à 80 % de sa taille. */
@@ -359,15 +429,10 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
     }
 
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(Color.rgb(235, 235, 230))
+        canvas.drawColor(MAP_BG)
         mapBitmap?.let { canvas.drawBitmap(it, viewMatrix, bitmapPaint) }
         val t = track
-        if (t == null && mapBitmap == null) {
-            textPaint.textSize = 16 * density
-            canvas.drawText("Ouvrez une carte (image ou PDF)", width / 2f, height / 2f - 12 * density, textPaint)
-            canvas.drawText("et une trace (GPX, FIT, TCX) avec les boutons du haut.", width / 2f, height / 2f + 12 * density, textPaint)
-            return
-        }
+        if (t == null && mapBitmap == null) return
         val vs = viewScale()
         drawCourse(canvas, viewMatrix, controlRadiusMap() * vs, max(1.5f * density, controlRadiusMap() * vs * 0.1f))
         if (t == null || t.isEmpty) return
@@ -376,7 +441,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         val w = traceWidthDp * density
         val dim = mode == Mode.REPLAY || highlightFrom >= 0
         drawTrack(canvas, t, tmpMatrix, w, screenPts, if (dim) 70 else 255)
-        if (highlightFrom >= 0) drawRange(canvas, t, screenPts, highlightFrom, highlightTo, w * 1.4f, Color.rgb(0, 90, 255))
+        if (highlightFrom >= 0) drawRange(canvas, t, screenPts, highlightFrom, highlightTo, w * 1.4f, HIGHLIGHT)
         if (mode == Mode.REPLAY) drawReplay(canvas, t, w)
         else drawStartFinish(canvas, screenPts, t, 9 * density)
         if (mode == Mode.CALIBRATE) drawCalibration(canvas)
@@ -453,9 +518,9 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         linePaint.color = if (idx < segColor.size) segColor[idx] else Color.RED
         canvas.drawLine(screenPts[2 * idx], screenPts[2 * idx + 1], pos[0], pos[1], linePaint)
         if (replayFollow) {
-            val mx = width * 0.2f; val my = height * 0.2f
-            if (pos[0] < mx || pos[0] > width - mx || pos[1] < my || pos[1] > height - my) {
-                val dx = width / 2f - pos[0]; val dy = height / 2f - pos[1]
+            val mx = width * 0.2f; val my = visibleH * 0.2f
+            if (pos[0] < mx || pos[0] > width - mx || pos[1] < insetTop + my || pos[1] > insetTop + visibleH - my) {
+                val dx = width / 2f - pos[0]; val dy = visibleCy - pos[1]
                 viewMatrix.postTranslate(dx, dy)
                 pos[0] += dx; pos[1] += dy
                 postInvalidateOnAnimation()
@@ -463,7 +528,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         }
         fillPaint.color = Color.WHITE
         canvas.drawCircle(pos[0], pos[1], 9 * density, fillPaint)
-        fillPaint.color = Color.rgb(0, 90, 255)
+        fillPaint.color = HIGHLIGHT
         canvas.drawCircle(pos[0], pos[1], 6.5f * density, fillPaint)
         if (replayPlaying) postInvalidateOnAnimation()
     }
@@ -547,7 +612,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
             tmpMatrix.mapPoints(a, calibLocal[i])
             viewMatrix.mapPoints(b, calibMap[i])
             canvas.drawLine(a[0], a[1], b[0], b[1], dashPaint)
-            fillPaint.color = Color.rgb(0, 90, 255)
+            fillPaint.color = HIGHLIGHT
             canvas.drawCircle(a[0], a[1], r * 0.6f, fillPaint)
             markerPaint.strokeWidth = 2.5f * density
             canvas.drawLine(b[0] - r, b[1], b[0] + r, b[1], markerPaint)
@@ -559,9 +624,9 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
             val p = track ?: return
             a[0] = p.local[2 * pendingTraceIdx]; a[1] = p.local[2 * pendingTraceIdx + 1]
             tmpMatrix.mapPoints(a)
-            fillPaint.color = Color.argb(120, 0, 90, 255)
+            fillPaint.color = Color.argb(110, 37, 99, 235)
             canvas.drawCircle(a[0], a[1], 2.2f * r, fillPaint)
-            fillPaint.color = Color.rgb(0, 90, 255)
+            fillPaint.color = HIGHLIGHT
             canvas.drawCircle(a[0], a[1], r * 0.7f, fillPaint)
         }
     }
@@ -635,6 +700,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
                 return
             }
             pendingTraceIdx = best
+            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         } else {
             viewMatrix.invert(invMatrix)
             val m = floatArrayOf(x, y).also { invMatrix.mapPoints(it) }
@@ -642,6 +708,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
             calibMap.add(m)
             pendingTraceIdx = -1
             applyCalibration()
+            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         }
         invalidate()
         listener?.onStateChanged()
@@ -655,6 +722,29 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
     private var downX = 0f
     private var downY = 0f
     private var tapCandidate = false
+    private var lastTapTime = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    private val longPress = Runnable {
+        val i = draggedControl
+        if (mode == Mode.CONTROLS && tapCandidate && i >= 0 && i < controls.size) {
+            val removed = controls.removeAt(i)
+            draggedControl = -1
+            tapCandidate = false
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            clearHighlight()
+            invalidate()
+            listener?.onControlRemoved(i, removed)
+            listener?.onStateChanged()
+        }
+    }
+
+    /** Remet un poste supprimé à sa place. */
+    fun restoreControl(index: Int, position: FloatArray) {
+        controls.add(index.coerceIn(0, controls.size), position)
+        invalidate()
+        listener?.onStateChanged()
+    }
 
     private fun rememberPointers(e: MotionEvent, skipIndex: Int = -1) {
         var k = 0
@@ -683,30 +773,49 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y; tapCandidate = true
+                cameraAnim?.cancel()
                 draggedControl = if (mode == Mode.CONTROLS) controlAt(e.x, e.y) else -1
+                if (draggedControl >= 0) postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
                 rememberPointers(e)
             }
-            MotionEvent.ACTION_POINTER_DOWN -> { tapCandidate = false; draggedControl = -1; rememberPointers(e) }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                tapCandidate = false; draggedControl = -1; removeCallbacks(longPress); rememberPointers(e)
+            }
             MotionEvent.ACTION_POINTER_UP -> rememberPointers(e, e.actionIndex)
             MotionEvent.ACTION_MOVE -> {
-                if (tapCandidate && hypot(e.x - downX, e.y - downY) > touchSlop) tapCandidate = false
+                if (tapCandidate && hypot(e.x - downX, e.y - downY) > touchSlop) {
+                    tapCandidate = false
+                    removeCallbacks(longPress)
+                }
                 if (!tapCandidate) {
                     if (draggedControl >= 0 && e.pointerCount == 1) moveControl(e)
                     else handleMove(e)
                 }
             }
             MotionEvent.ACTION_UP -> {
+                removeCallbacks(longPress)
                 if (tapCandidate) {
                     when (mode) {
                         Mode.CALIBRATE -> handleCalibrationTap(e.x, e.y)
                         Mode.CONTROLS -> if (draggedControl < 0) addControlAt(e.x, e.y)
-                        else -> {}
+                        else -> {
+                            // Double-tap : zoom ×2 à cet endroit.
+                            val now = SystemClock.uptimeMillis()
+                            if (now - lastTapTime < ViewConfiguration.getDoubleTapTimeout() &&
+                                hypot(e.x - lastTapX, e.y - lastTapY) < 48 * density
+                            ) {
+                                zoomBy(2f, e.x, e.y)
+                                lastTapTime = 0
+                            } else {
+                                lastTapTime = now; lastTapX = e.x; lastTapY = e.y
+                            }
+                        }
                     }
                 }
                 if (draggedControl >= 0) { draggedControl = -1; invalidate(); listener?.onStateChanged() }
                 tapCandidate = false
             }
-            MotionEvent.ACTION_CANCEL -> { tapCandidate = false; draggedControl = -1 }
+            MotionEvent.ACTION_CANCEL -> { tapCandidate = false; draggedControl = -1; removeCallbacks(longPress) }
         }
         return true
     }
@@ -714,6 +823,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
     private fun addControlAt(x: Float, y: Float) {
         viewMatrix.invert(invMatrix)
         controls.add(floatArrayOf(x, y).also { invMatrix.mapPoints(it) })
+        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         clearHighlight()
         invalidate()
         listener?.onStateChanged()
@@ -766,6 +876,7 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
             traceMatrix.postConcat(invMatrix)
         } else {
             viewMatrix.postConcat(d)
+            userMovedView = true
         }
         rememberPointers(e)
         invalidate()
@@ -773,14 +884,13 @@ class OverlayView(context: Context, attrs: AttributeSet? = null) : View(context,
 
     private fun clampZoom(s: Float): Float {
         val cur = viewScale()
-        val (cw, ch) = contentSize()
-        val minScale = 0.3f * min(width / cw, height / ch)
-        val maxScale = 12f * density
-        return (cur * s).coerceIn(minScale, maxScale) / cur
+        return (cur * s).coerceIn(minScale(), 12f * density) / cur
     }
 
     companion object {
         /** Violet des circuits de course d'orientation (norme IOF). */
         val COURSE_COLOR = Color.argb(230, 166, 38, 255)
+        val HIGHLIGHT = Color.rgb(37, 99, 235)
+        val MAP_BG = Color.rgb(233, 231, 225)
     }
 }
