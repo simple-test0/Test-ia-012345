@@ -5,4 +5,26 @@
         <item name="android:colorPrimaryDark">#8E0063</item>
         <item name="android:colorAccent">#E8590C</item>
     </style>
+
+    <style name="BottomBar">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:background">#F2F2F2</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:paddingHorizontal">2dp</item>
+        <item name="android:paddingVertical">4dp</item>
+    </style>
+
+    <style name="BarButton" parent="android:Widget.Material.Button.Borderless">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginHorizontal">1dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingHorizontal">2dp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">15sp</item>
+    </style>
 </resources>

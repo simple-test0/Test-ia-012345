@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:id="@+id/open_map" android:title="@string/open_map" android:showAsAction="always|withText" />
-    <item android:id="@+id/open_gpx" android:title="@string/open_gpx" android:showAsAction="always|withText" />
+    <item android:id="@+id/open_track" android:title="@string/open_track" android:showAsAction="always|withText" />
+    <item android:id="@+id/splits" android:title="@string/splits" />
     <item android:id="@+id/map_scale" android:title="@string/map_scale" />
     <item android:id="@+id/pdf_page" android:title="@string/pdf_page" />
     <item android:id="@+id/speed_colors" android:title="@string/speed_colors" android:checkable="true" />

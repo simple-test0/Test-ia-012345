@@ -43,69 +43,73 @@
         android:textColor="#555555"
         android:textSize="13sp" />
 
+    <!-- Barre des modes -->
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="#F2F2F2"
-        android:orientation="horizontal"
-        android:paddingHorizontal="4dp"
-        android:paddingVertical="4dp">
+        android:id="@+id/modeBar"
+        style="@style/BottomBar">
+
+        <Button android:id="@+id/btnMap" style="@style/BarButton" android:text="@string/mode_map" />
+        <Button android:id="@+id/btnTrace" style="@style/BarButton" android:text="@string/mode_trace" />
+        <Button android:id="@+id/btnCalib" style="@style/BarButton" android:text="@string/mode_calib" />
+        <Button android:id="@+id/btnControls" style="@style/BarButton" android:text="@string/mode_controls" />
+        <Button android:id="@+id/btnReplay" style="@style/BarButton" android:text="@string/mode_replay" />
+    </LinearLayout>
+
+    <!-- Calage par points -->
+    <LinearLayout
+        android:id="@+id/calibBar"
+        style="@style/BottomBar"
+        android:visibility="gone">
+
+        <Button android:id="@+id/btnUndo" style="@style/BarButton" android:text="@string/undo" />
+        <Button android:id="@+id/btnDone" style="@style/BarButton" android:text="@string/done" />
+    </LinearLayout>
+
+    <!-- Postes -->
+    <LinearLayout
+        android:id="@+id/controlsBar"
+        style="@style/BottomBar"
+        android:visibility="gone">
+
+        <Button android:id="@+id/btnCtrlUndo" style="@style/BarButton" android:text="@string/undo" />
+        <Button android:id="@+id/btnCtrlClear" style="@style/BarButton" android:text="@string/clear" />
+        <Button android:id="@+id/btnSplits" style="@style/BarButton" android:text="@string/splits_short" />
+        <Button android:id="@+id/btnCtrlDone" style="@style/BarButton" android:text="@string/done" />
+    </LinearLayout>
+
+    <!-- Replay -->
+    <LinearLayout
+        android:id="@+id/replayBar"
+        style="@style/BottomBar"
+        android:gravity="center_vertical"
+        android:visibility="gone">
 
         <Button
-            android:id="@+id/btnMap"
-            style="?android:attr/buttonBarButtonStyle"
+            android:id="@+id/btnPlay"
+            style="@style/BarButton"
+            android:layout_width="56dp"
+            android:layout_weight="0"
+            android:text="▶" />
+
+        <SeekBar
+            android:id="@+id/replaySeek"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginHorizontal="2dp"
-            android:maxLines="1"
-            android:minHeight="48dp"
-            android:text="@string/mode_map" />
+            android:max="1000" />
 
         <Button
-            android:id="@+id/btnTrace"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginHorizontal="2dp"
-            android:maxLines="1"
-            android:minHeight="48dp"
-            android:text="@string/mode_trace" />
+            android:id="@+id/btnSpeed"
+            style="@style/BarButton"
+            android:layout_width="64dp"
+            android:layout_weight="0"
+            android:text="×10" />
 
         <Button
-            android:id="@+id/btnCalib"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginHorizontal="2dp"
-            android:maxLines="1"
-            android:minHeight="48dp"
-            android:text="@string/mode_calib" />
-
-        <Button
-            android:id="@+id/btnUndo"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginHorizontal="2dp"
-            android:maxLines="1"
-            android:minHeight="48dp"
-            android:text="@string/undo"
-            android:visibility="gone" />
-
-        <Button
-            android:id="@+id/btnDone"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginHorizontal="2dp"
-            android:maxLines="1"
-            android:minHeight="48dp"
-            android:text="@string/done"
-            android:visibility="gone" />
+            android:id="@+id/btnReplayDone"
+            style="@style/BarButton"
+            android:layout_width="wrap_content"
+            android:layout_weight="0"
+            android:text="@string/done" />
     </LinearLayout>
 </LinearLayout>

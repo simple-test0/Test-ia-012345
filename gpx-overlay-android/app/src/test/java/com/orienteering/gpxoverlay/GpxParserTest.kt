@@ -63,4 +63,44 @@ class GpxParserTest {
         assertNotNull(GpxParser.parseTime("2024-05-01T10:00:00"))
         assertNull(GpxParser.parseTime("n'importe quoi"))
     }
+
+    @Test
+    fun readsTcx() {
+        val t = TrackParser.parse(
+            """<?xml version="1.0"?>
+            <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+              <Activities><Activity Sport="Running"><Id>2024-05-01T10:00:00Z</Id>
+                <Lap StartTime="2024-05-01T10:00:00Z"><Track>
+                  <Trackpoint><Time>2024-05-01T10:00:00Z</Time>
+                    <Position><LatitudeDegrees>45.0</LatitudeDegrees><LongitudeDegrees>5.0</LongitudeDegrees></Position>
+                    <AltitudeMeters>300</AltitudeMeters><HeartRateBpm><Value>150</Value></HeartRateBpm></Trackpoint>
+                  <Trackpoint><Time>2024-05-01T10:00:05Z</Time><HeartRateBpm><Value>151</Value></HeartRateBpm></Trackpoint>
+                  <Trackpoint><Time>2024-05-01T10:00:10Z</Time>
+                    <Position><LatitudeDegrees>45.0009</LatitudeDegrees><LongitudeDegrees>5.0</LongitudeDegrees></Position></Trackpoint>
+                </Track></Lap>
+              </Activity></Activities>
+            </TrainingCenterDatabase>""".byteInputStream()
+        )
+        assertEquals(2, t.points.size)
+        assertEquals(300.0, t.points[0].ele!!, 1e-9)
+        assertEquals(10_000L, t.durationMs)
+        assertEquals(100.0, t.distanceM, 1.0)
+    }
+
+    @Test
+    fun positionAtInterpolates() {
+        val t = parse(
+            """<gpx><trk><trkseg>
+              <trkpt lat="45.0" lon="5.0"><time>2024-05-01T10:00:00Z</time></trkpt>
+              <trkpt lat="45.0009" lon="5.0"><time>2024-05-01T10:00:10Z</time></trkpt>
+            </trkseg></trk></gpx>"""
+        )
+        val out = FloatArray(2)
+        val i = t.positionAt(t.startTimeMs!! + 5_000, out)
+        assertEquals(0, i)
+        assertEquals((t.local[1] + t.local[3]) / 2, out[1], 0.01f)
+        // Avant le début / après la fin : on reste aux extrémités.
+        t.positionAt(0, out); assertEquals(t.local[1], out[1], 0.01f)
+        t.positionAt(Long.MAX_VALUE, out); assertEquals(t.local[3], out[1], 0.01f)
+    }
 }

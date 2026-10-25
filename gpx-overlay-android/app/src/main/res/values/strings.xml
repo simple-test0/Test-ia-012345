@@ -2,7 +2,9 @@
 <resources>
     <string name="app_name">Trace O</string>
     <string name="open_map">Carte</string>
-    <string name="open_gpx">GPX</string>
+    <string name="open_track">Trace</string>
+    <string name="splits">Temps intermédiaires</string>
+    <string name="splits_short">Temps</string>
     <string name="map_scale">Échelle de la carte…</string>
     <string name="speed_colors">Couleur selon la vitesse</string>
     <string name="lock_scale">Verrouiller l\'échelle de la trace</string>
@@ -11,9 +13,12 @@
     <string name="fit_view">Voir toute la carte</string>
     <string name="export">Exporter l\'image…</string>
     <string name="pdf_page">Page du PDF…</string>
-    <string name="mode_map">Déplacer</string>
+    <string name="mode_map">Vue</string>
     <string name="mode_trace">Ajuster</string>
-    <string name="mode_calib">Calage</string>
+    <string name="mode_calib">Caler</string>
+    <string name="mode_controls">Postes</string>
+    <string name="mode_replay">Rejouer</string>
     <string name="undo">Annuler</string>
+    <string name="clear">Effacer</string>
     <string name="done">Terminé</string>
 </resources>

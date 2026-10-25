@@ -27,6 +27,10 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
     val minX: Float; val maxX: Float; val minY: Float; val maxY: Float
     val distanceM: Double
     val durationMs: Long?
+    /** Distance parcourue depuis le premier point (m). */
+    val cumDist: DoubleArray
+    /** Indices des points horodatés, dans l'ordre. */
+    val timedIdx: IntArray
 
     init {
         val segs = segments.filter { it.isNotEmpty() }
@@ -52,9 +56,24 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
         if (points.isEmpty()) { x0 = 0f; x1 = 0f; y0 = 0f; y1 = 0f }
         minX = x0; maxX = x1; minY = y0; maxY = y1
 
+        cumDist = DoubleArray(points.size)
         var d = 0.0
-        forEachSegment { a, b -> for (i in a until b - 1) d += haversine(points[i], points[i + 1]) }
+        forEachSegment { a, b ->
+            if (a < points.size) cumDist[a] = d
+            for (i in a until b - 1) {
+                d += haversine(points[i], points[i + 1])
+                cumDist[i + 1] = d
+            }
+        }
         distanceM = d
+
+        val timed = ArrayList<Int>()
+        var lastT = Long.MIN_VALUE
+        points.forEachIndexed { i, p ->
+            val t = p.timeMs
+            if (t != null && t >= lastT) { timed.add(i); lastT = t }
+        }
+        timedIdx = timed.toIntArray()
 
         val t0 = points.firstOrNull { it.timeMs != null }?.timeMs
         val t1 = points.lastOrNull { it.timeMs != null }?.timeMs
@@ -75,6 +94,35 @@ class Track(val name: String?, segments: List<List<TrackPoint>>) {
                 speeds[i] = (dist / ((tb - ta) / 1000.0)).toFloat()
             }
         }
+    }
+
+    val startTimeMs: Long? get() = timedIdx.firstOrNull()?.let { points[it].timeMs }
+    val endTimeMs: Long? get() = timedIdx.lastOrNull()?.let { points[it].timeMs }
+
+    /**
+     * Position à l'instant [t] (interpolée entre deux points horodatés).
+     * Écrit x,y locaux dans [out] et renvoie l'indice du point juste avant, ou -1.
+     */
+    fun positionAt(t: Long, out: FloatArray): Int {
+        if (timedIdx.isEmpty()) return -1
+        var lo = 0
+        var hi = timedIdx.size - 1
+        if (t <= points[timedIdx[0]].timeMs!!) hi = 0
+        else if (t >= points[timedIdx[hi]].timeMs!!) lo = hi
+        else {
+            while (hi - lo > 1) {
+                val mid = (lo + hi) / 2
+                if (points[timedIdx[mid]].timeMs!! <= t) lo = mid else hi = mid
+            }
+        }
+        val ia = timedIdx[lo]
+        val ib = timedIdx[hi]
+        val ta = points[ia].timeMs!!
+        val tb = points[ib].timeMs!!
+        val f = if (tb > ta) ((t - ta).toDouble() / (tb - ta)).toFloat().coerceIn(0f, 1f) else 0f
+        out[0] = local[2 * ia] + (local[2 * ib] - local[2 * ia]) * f
+        out[1] = local[2 * ia + 1] + (local[2 * ib + 1] - local[2 * ia + 1]) * f
+        return ia
     }
 
     val isEmpty: Boolean get() = points.isEmpty()

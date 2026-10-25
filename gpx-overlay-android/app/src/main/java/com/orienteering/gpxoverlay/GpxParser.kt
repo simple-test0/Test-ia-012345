@@ -9,7 +9,11 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import javax.xml.parsers.SAXParserFactory
 
-/** Lecture d'un fichier GPX : points de trace (trkpt), ou à défaut points de route (rtept). */
+/**
+ * Lecture d'un fichier XML de trace :
+ *  - GPX : points de trace (trkpt), ou à défaut points de route (rtept) ;
+ *  - TCX (Garmin Training Center) : Trackpoint.
+ */
 object GpxParser {
 
     class GpxException(msg: String) : Exception(msg)
@@ -27,11 +31,11 @@ object GpxParser {
         try {
             factory.newSAXParser().parse(input, handler)
         } catch (e: Exception) {
-            throw GpxException("Fichier GPX illisible : ${e.message}")
+            throw GpxException("Fichier de trace illisible : ${e.message}")
         }
         val segments = handler.trackSegments.filter { it.isNotEmpty() }
             .ifEmpty { handler.routes.filter { it.isNotEmpty() } }
-        if (segments.isEmpty()) throw GpxException("Aucun point de trace trouvé dans ce fichier.")
+        if (segments.isEmpty()) throw GpxException("Aucun point de trace avec position GPS dans ce fichier.")
         return Track(handler.name, segments)
     }
 
@@ -56,6 +60,7 @@ object GpxParser {
         private var ele: Double? = null
         private var time: Long? = null
         private var inPoint = false
+        private var tcxPoint = false
         private var depth = 0
         private var pointDepth = 0
         private val text = StringBuilder()
@@ -67,7 +72,11 @@ object GpxParser {
             depth++
             text.setLength(0)
             when (local(localName, qName)) {
-                "trkseg" -> { current = mutableListOf<TrackPoint>().also { trackSegments.add(it) } }
+                "trkseg", "track" -> { current = mutableListOf<TrackPoint>().also { trackSegments.add(it) } }
+                "trackpoint" -> {
+                    lat = Double.NaN; lon = Double.NaN; ele = null; time = null
+                    inPoint = true; tcxPoint = true; pointDepth = depth
+                }
                 "rte" -> { current = mutableListOf<TrackPoint>().also { routes.add(it) } }
                 "trkpt", "rtept" -> {
                     val la = attrs.getValue("lat")?.toDoubleOrNull()
@@ -88,8 +97,18 @@ object GpxParser {
             val n = local(localName, qName)
             if (inPoint) {
                 when (n) {
-                    "ele" -> ele = text.toString().trim().toDoubleOrNull()
+                    "ele", "altitudemeters" -> ele = text.toString().trim().toDoubleOrNull()
                     "time" -> time = parseTime(text.toString())
+                    "latitudedegrees" -> lat = text.toString().trim().toDoubleOrNull() ?: Double.NaN
+                    "longitudedegrees" -> lon = text.toString().trim().toDoubleOrNull() ?: Double.NaN
+                    "trackpoint" -> if (depth == pointDepth) {
+                        // Les Trackpoint sans position (pause, capteur seul) sont ignorés.
+                        if (lat in -90.0..90.0 && lon in -180.0..180.0) {
+                            val seg = current ?: mutableListOf<TrackPoint>().also { current = it; trackSegments.add(it) }
+                            seg.add(TrackPoint(lat, lon, ele, time))
+                        }
+                        inPoint = false; tcxPoint = false
+                    }
                     "trkpt", "rtept" -> if (depth == pointDepth) {
                         val seg = current ?: mutableListOf<TrackPoint>().also {
                             current = it
@@ -102,7 +121,7 @@ object GpxParser {
             } else if (n == "name" && name == null && depth <= 3) {
                 name = text.toString().trim().ifEmpty { null }
             }
-            if (n == "trkseg" || n == "rte") current = null
+            if (n == "trkseg" || n == "rte" || n == "track") current = null
             text.setLength(0)
             depth--
         }

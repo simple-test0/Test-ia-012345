@@ -21,6 +21,9 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.fakes.RoboMenuItem
+import org.robolectric.shadows.ShadowAlertDialog
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 import java.io.File
 
 /** Scénario complet : ouvrir une carte + un GPX, ajuster, caler par points, dessiner. */
@@ -80,12 +83,13 @@ class MainActivityTest {
 
         openVia(activity, R.id.open_map, resourceFile("carte_test.jpg"))
         waitFor { overlay.mapBitmap != null }
-        openVia(activity, R.id.open_gpx, resourceFile("trace_test.gpx"))
+        openVia(activity, R.id.open_track, resourceFile("trace_test.gpx"))
         waitFor { overlay.track != null }
         assertEquals(241, overlay.track!!.points.size)
         screenshot(overlay, "1_charge")
 
         // Le texte des stats est rempli.
+        screenshotRoot(activity, "ecran_principal")
         val stats = activity.findViewById<android.widget.TextView>(R.id.stats).text.toString()
         assertTrue(stats, stats.contains("km"))
 
@@ -156,5 +160,125 @@ class MainActivityTest {
         val v1 = FloatArray(9).also { saved.getValues(it) }
         val v2 = FloatArray(9).also { ov2.traceMatrix.getValues(it) }
         for (k in 0 until 9) assertEquals(v1[k], v2[k], 1e-3f)
+    }
+
+    /** Capture de tout l'écran (barres et boutons compris). */
+    private fun screenshotRoot(a: Activity, name: String) {
+        val root = a.window.decorView
+        root.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(root.width, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(root.height, android.view.View.MeasureSpec.EXACTLY),
+        )
+        root.layout(0, 0, root.width, root.height)
+        val b = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+        root.draw(Canvas(b))
+        File("build/test-screens").mkdirs()
+        File("build/test-screens/$name.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    private fun viewMatrixOf(v: OverlayView) =
+        v.javaClass.getDeclaredField("viewMatrix").apply { isAccessible = true }.get(v) as Matrix
+
+    @Test
+    fun controlsSplitsAndReplay() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        val overlay = activity.findViewById<OverlayView>(R.id.overlay)
+        openVia(activity, R.id.open_map, resourceFile("carte_test.jpg"))
+        waitFor { overlay.mapBitmap != null }
+        openVia(activity, R.id.open_track, resourceFile("trace_test.gpx"))
+        waitFor { overlay.track != null }
+        val t = overlay.track!!
+
+        // Mode Postes : on touche la carte à l'endroit de 5 points de la trace.
+        activity.findViewById<android.widget.Button>(R.id.btnControls).performClick()
+        assertEquals(OverlayView.Mode.CONTROLS, overlay.mode)
+        val vm = viewMatrixOf(overlay)
+        val idx = listOf(0, 60, 120, 180, 240)
+        for (i in idx) {
+            val p = floatArrayOf(t.local[2 * i], t.local[2 * i + 1])
+            overlay.traceMatrix.mapPoints(p); vm.mapPoints(p)
+            touch(overlay, MotionEvent.ACTION_DOWN, p[0], p[1]); touch(overlay, MotionEvent.ACTION_UP, p[0], p[1])
+        }
+        // Le départ et l'arrivée sont au même endroit : le dernier toucher tombe sur le départ
+        // et ne crée pas de poste. On ajoute donc l'arrivée un peu à côté.
+        assertEquals(4, overlay.controls.size)
+        val pEnd = floatArrayOf(t.local[2 * 238], t.local[2 * 238 + 1])
+        overlay.traceMatrix.mapPoints(pEnd); vm.mapPoints(pEnd)
+        overlay.controls.add(floatArrayOf(0f, 0f).also { c ->
+            val inv = Matrix(); vm.invert(inv); inv.mapPoints(c, pEnd)
+        })
+        assertEquals(5, overlay.controls.size)
+
+        // Glisser un poste le déplace.
+        val c1 = overlay.controls[1].copyOf()
+        val s1 = c1.copyOf().also { vm.mapPoints(it) }
+        touch(overlay, MotionEvent.ACTION_DOWN, s1[0], s1[1])
+        touch(overlay, MotionEvent.ACTION_MOVE, s1[0] + 30, s1[1])
+        touch(overlay, MotionEvent.ACTION_MOVE, s1[0] + 40, s1[1])
+        touch(overlay, MotionEvent.ACTION_UP, s1[0] + 40, s1[1])
+        assertTrue(overlay.controls[1][0] > c1[0])
+        overlay.controls[1] = c1
+        screenshot(overlay, "3_postes")
+        screenshotRoot(activity, "ecran_postes")
+
+        // Temps intermédiaires.
+        val punches = Splits.punches(t, overlay.controlsLocal()!!)
+        assertEquals(listOf(0, 60, 120, 180), punches.take(4).map { it.pointIndex })
+        assertTrue(punches.all { it.sure })
+        activity.findViewById<android.widget.Button>(R.id.btnSplits).performClick()
+        val dialog = ShadowAlertDialog.getLatestAlertDialog()
+        assertNotNull(dialog)
+        assertTrue(dialog.isShowing)
+        val dw = dialog.window!!.decorView
+        dw.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(380, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(700, android.view.View.MeasureSpec.AT_MOST),
+        )
+        dw.layout(0, 0, dw.measuredWidth, dw.measuredHeight)
+        val db = Bitmap.createBitmap(dw.measuredWidth, dw.measuredHeight, Bitmap.Config.ARGB_8888)
+        dw.draw(Canvas(db))
+        File("build/test-screens/ecran_temps.png").outputStream().use { db.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        dialog.dismiss()
+        activity.findViewById<android.widget.Button>(R.id.btnCtrlDone).performClick()
+
+        // Replay.
+        activity.findViewById<android.widget.Button>(R.id.btnReplay).performClick()
+        assertEquals(OverlayView.Mode.REPLAY, overlay.mode)
+        overlay.setReplayTime(punches[1].timeMs!! + 3_000)
+        val hint = activity.findViewById<android.widget.TextView>(R.id.hint).text.toString()
+        assertTrue(hint, hint.contains("1 → 2"))
+        activity.findViewById<android.widget.Button>(R.id.btnPlay).performClick()
+        assertTrue(overlay.replayPlaying)
+        val before = overlay.replayTimeMs
+        screenshot(overlay, "4_replay")
+        ShadowSystemClock.advanceBy(Duration.ofMillis(100))
+        screenshot(overlay, "4_replay")
+        screenshotRoot(activity, "ecran_replay")
+        assertTrue(overlay.replayTimeMs > before)
+        activity.findViewById<android.widget.Button>(R.id.btnReplayDone).performClick()
+        assertTrue(!overlay.replayPlaying)
+
+        // Les postes sont sauvegardés avec la session.
+        controller.pause().stop().destroy()
+        val restored = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val ov2 = restored.findViewById<OverlayView>(R.id.overlay)
+        waitFor { ov2.mapBitmap != null && ov2.track != null }
+        assertEquals(5, ov2.controls.size)
+    }
+
+    @Test
+    fun sharedFilesAreImported() {
+        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "*/*"
+            putParcelableArrayListExtra(
+                Intent.EXTRA_STREAM,
+                arrayListOf(Uri.fromFile(resourceFile("trace_test.gpx")), Uri.fromFile(resourceFile("carte_test.jpg")))
+            )
+        }
+        val activity = Robolectric.buildActivity(MainActivity::class.java, intent).setup().get()
+        val overlay = activity.findViewById<OverlayView>(R.id.overlay)
+        waitFor { overlay.mapBitmap != null && overlay.track != null }
+        assertEquals(241, overlay.track!!.points.size)
     }
 }
