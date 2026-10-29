@@ -18,9 +18,8 @@ from services.agent.tool_registry import register_tool
 async def web_search(query: str, max_results: int = 5) -> str:
     try:
         # ddgs performs blocking HTTP requests, so run it off the event loop.
-        results = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: _search(query, max_results)
-        )
+        max_results = max(1, min(int(max_results or 5), 10))
+        results = await asyncio.to_thread(_search, query, max_results)
     except Exception as exc:
         return f"Search error: {exc}"
 

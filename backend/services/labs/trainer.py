@@ -40,7 +40,12 @@ def _training_process(
             raise ValueError(f"Unknown architecture: {arch_id}")
         model = spec.builder(arch_config)
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            device = torch.device("mps")  # Apple Silicon GPU
+        else:
+            device = torch.device("cpu")
         model = model.to(device)
 
         num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -79,23 +84,27 @@ def _training_process(
         train_size = len(dataset) - val_size
         train_ds, val_ds = random_split(dataset, [train_size, val_size])
 
-        num_workers = min(training_config.get("num_workers", 2), 4)
-        batch_size = training_config.get("batch_size", 16)
+        # Datasets are in-memory tensors: extra loader processes only add
+        # start-up cost (and fragile process spawning on macOS/Windows).
+        num_workers = max(0, min(int(training_config.get("num_workers", 0)), 4))
+        batch_size = max(1, int(training_config.get("batch_size", 16)))
+        pin = device.type == "cuda"
         train_loader = DataLoader(
             train_ds, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=device.type == "cuda"
+            num_workers=num_workers, pin_memory=pin,
         )
         val_loader = DataLoader(
-            val_ds, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers
+            val_ds, batch_size=batch_size * 2, shuffle=False,
+            num_workers=num_workers, pin_memory=pin,
         )
 
         # ── Optimizer + Scheduler ─────────────────────────────────────────────
         lr = training_config.get("learning_rate", 3e-4)
         wd = training_config.get("weight_decay", 1e-4)
         optimizer_name = training_config.get("optimizer", "adamw").lower()
-        epochs = training_config.get("epochs", 10)
+        epochs = max(1, int(training_config.get("epochs", 10)))
         grad_clip = training_config.get("gradient_clip_norm", 1.0)
-        grad_accum = training_config.get("gradient_accumulation_steps", 1)
+        grad_accum = max(1, int(training_config.get("gradient_accumulation_steps", 1)))
         use_amp = training_config.get("use_mixed_precision", "fp16") != "no" and device.type == "cuda"
 
         if optimizer_name == "adamw":
@@ -120,7 +129,7 @@ def _training_process(
             scheduler = None
 
         criterion = nn.CrossEntropyLoss()
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
         checkpoint_dir_path = Path(checkpoint_dir)
         checkpoint_dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -132,10 +141,10 @@ def _training_process(
             if stop_event.is_set():
                 break
 
-            while pause_event.is_set():
+            while pause_event.is_set() and not stop_event.is_set():
                 time.sleep(0.5)
-                if stop_event.is_set():
-                    break
+            if stop_event.is_set():
+                break
 
             model.train()
             train_loss = 0.0
@@ -146,12 +155,15 @@ def _training_process(
             for step, (inputs, labels) in enumerate(train_loader):
                 if stop_event.is_set():
                     break
-                while pause_event.is_set():
+                while pause_event.is_set() and not stop_event.is_set():
                     time.sleep(0.5)
+                if stop_event.is_set():
+                    break
 
-                inputs, labels = inputs.to(device), labels.to(device)
+                inputs = inputs.to(device, non_blocking=pin)
+                labels = labels.to(device, non_blocking=pin)
 
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with torch.autocast(device_type=device.type, enabled=use_amp):
                     outputs = model(inputs)
                     loss = criterion(outputs, labels) / grad_accum
 
@@ -181,6 +193,9 @@ def _training_process(
                         "lr": optimizer.param_groups[0]["lr"],
                     })
 
+            if stop_event.is_set():
+                break  # don't validate/checkpoint a partial epoch
+
             train_loss /= max(len(train_loader), 1)
             train_acc = correct / max(total, 1)
 
@@ -192,7 +207,7 @@ def _training_process(
             with torch.no_grad():
                 for inputs, labels in val_loader:
                     inputs, labels = inputs.to(device), labels.to(device)
-                    with torch.cuda.amp.autocast(enabled=use_amp):
+                    with torch.autocast(device_type=device.type, enabled=use_amp):
                         outputs = model(inputs)
                         loss = criterion(outputs, labels)
                     val_loss += loss.item()
@@ -229,7 +244,10 @@ def _training_process(
                 "lr": optimizer.param_groups[0]["lr"],
             })
 
-        emit({"type": "completed", "best_checkpoint": best_ckpt})
+        if stop_event.is_set():
+            emit({"type": "stopped", "best_checkpoint": best_ckpt})
+        else:
+            emit({"type": "completed", "best_checkpoint": best_ckpt})
 
     except Exception as exc:
         import traceback
@@ -309,6 +327,10 @@ class TrainingManager:
     """Manages training subprocesses and their metric queues."""
 
     def __init__(self):
+        # "spawn" everywhere: forking a server that already initialised CUDA
+        # (hardware detection does) breaks CUDA in the child, and fork is not
+        # available/safe on macOS and Windows anyway.
+        self._ctx = mp.get_context("spawn")
         self._processes: Dict[str, mp.Process] = {}
         self._queues: Dict[str, mp.Queue] = {}
         self._stop_events: Dict[str, mp.Event] = {}
@@ -323,14 +345,14 @@ class TrainingManager:
         dataset_path: Optional[str],
         checkpoint_dir: str,
     ) -> mp.Queue:
-        q: mp.Queue = mp.Queue(maxsize=1000)
-        stop_ev = mp.Event()
-        pause_ev = mp.Event()
+        q: mp.Queue = self._ctx.Queue(maxsize=1000)
+        stop_ev = self._ctx.Event()
+        pause_ev = self._ctx.Event()
 
         # Inject arch_id into config for dummy data detection
         arch_config = {**arch_config, "_arch_id": arch_id}
 
-        p = mp.Process(
+        p = self._ctx.Process(
             target=_training_process,
             args=(run_id, arch_id, arch_config, training_config, dataset_path,
                   checkpoint_dir, q, stop_ev, pause_ev),
@@ -367,14 +389,48 @@ class TrainingManager:
         if pause_ev:
             pause_ev.clear()
         p = self._processes.get(run_id)
-        if p and p.is_alive():
-            p.join(timeout=10)
-            if p.is_alive():
-                p.terminate()
+        try:
+            if p and p.is_alive():
+                p.join(timeout=10)
+                if p.is_alive():
+                    p.terminate()
+                    p.join(timeout=5)
+        except ValueError:
+            pass  # process object already closed by forget()
         return True
+
+    def is_alive(self, run_id: str) -> bool:
+        p = self._processes.get(run_id)
+        try:
+            return bool(p and p.is_alive())
+        except ValueError:
+            return False
+
+    def exit_code(self, run_id: str) -> Optional[int]:
+        p = self._processes.get(run_id)
+        try:
+            return p.exitcode if p else None
+        except ValueError:
+            return None
+
+    def stop_all(self) -> None:
+        for run_id in list(self._processes):
+            self.cleanup(run_id)
 
     def get_queue(self, run_id: str) -> Optional[mp.Queue]:
         return self._queues.get(run_id)
+
+    def forget(self, run_id: str) -> None:
+        """Drop bookkeeping for a run whose process has finished."""
+        p = self._processes.pop(run_id, None)
+        if p is not None and not p.is_alive():
+            try:
+                p.close()
+            except Exception:
+                pass
+        self._queues.pop(run_id, None)
+        self._stop_events.pop(run_id, None)
+        self._pause_events.pop(run_id, None)
 
     def cleanup(self, run_id: str) -> None:
         self.stop(run_id)

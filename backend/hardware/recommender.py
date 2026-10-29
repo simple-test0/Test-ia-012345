@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .detector import HardwareInfo, detect_hardware
+from .detector import HardwareInfo, detect_hardware_cached, effective_vram_mb
 
 
 @dataclass
@@ -51,8 +51,10 @@ class RecommendationSet:
 
 
 def _compute_batch_size(vram_mb: int) -> int:
+    if vram_mb <= 0:
+        return 32  # CPU: RAM is plentiful and tiny batches are very slow
     usable = int(vram_mb * 0.8)
-    return max(1, usable // 512)
+    return max(1, min(256, usable // 512))
 
 
 def _compute_max_params(vram_mb: int) -> int:
@@ -84,9 +86,9 @@ def _get_tier_label(vram_mb: int) -> str:
 
 def recommend(hw: Optional[HardwareInfo] = None) -> RecommendationSet:
     if hw is None:
-        hw = detect_hardware()
+        hw = detect_hardware_cached()
 
-    vram_mb = hw.gpus[0].vram_total_mb if hw.gpus else 0
+    vram_mb = effective_vram_mb(hw)
     ram_mb = hw.ram_total_mb
     cpu_cores = hw.cpu.logical_cores if hw.cpu else 4
 

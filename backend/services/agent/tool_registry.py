@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -63,10 +64,11 @@ async def execute_tool(name: str, args: dict) -> Any:
     if not tool:
         return f"Error: tool '{name}' not found"
     try:
-        import asyncio
         if asyncio.iscoroutinefunction(tool.func):
             return await tool.func(**args)
-        return tool.func(**args)
+        # Sync tools (e.g. code_executor waits on a subprocess) run in a worker
+        # thread so they never freeze the server.
+        return await asyncio.to_thread(tool.func, **args)
     except Exception as exc:
         logger.exception(f"Tool {name} raised: {exc}")
         return f"Error executing {name}: {exc}"
