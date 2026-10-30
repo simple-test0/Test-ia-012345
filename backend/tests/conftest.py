@@ -5,6 +5,7 @@ import tempfile
 # read at import time, so this must run before any app module is imported.
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="aistudio-tests-")
 os.environ.setdefault("SERVE_FRONTEND", "false")
+os.environ["FAST_SHUTDOWN"] = "false"  # os._exit would end the test run
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine

@@ -58,7 +58,16 @@
       qui installe, ouvre le navigateur et ne réinstalle que si nécessaire, mode prod
       sur un seul port.
 
+### v1.2
+- [x] **img2img** : image source (glisser / coller / choisir, ou « utiliser comme source »
+      depuis un résultat), force réglable, ratio conservé, migration Alembic. Validé de bout
+      en bout sur CPU avec un mini-modèle SD (à valider sur GPU avec un vrai modèle).
+- [x] **Bouton Stop** de l'agent (réponse partielle conservée, une réponse à la fois).
+- [x] **Lanceur Windows** natif (`start.bat` / `start.ps1`).
+- [x] **Arrêt instantané** (Ctrl+C) même pendant un téléchargement de modèle (107 s → 2 s).
+- [x] Les tests ne téléchargent plus jamais de vrais modèles ; `alembic upgrade head`
+      fonctionne sur une installation neuve ; plus de double session sur clic + Entrée rapides.
+
 ## ⏭️ Restant (nécessite un GPU pour être validé)
-- [ ] Génération **img2img** (upload d'image source) — back + UI à valider sur GPU.
 - [ ] **ControlNet** (pose/depth/canny) — pipeline + UI dédiés.
 - [ ] Tests e2e exécutant réellement torch/diffusers (marqueur `heavy` déjà en place).

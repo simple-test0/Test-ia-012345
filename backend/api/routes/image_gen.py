@@ -22,8 +22,11 @@ from services.image_gen.hf_connector import download_hf_model, download_progress
 from services.image_gen.images import (
     delete_job_files,
     image_urls,
+    init_image_path,
+    init_image_url,
     is_valid_image_name,
     make_thumbnail,
+    save_init_image,
     thumb_path_for,
 )
 from services.image_gen.model_registry import (
@@ -58,6 +61,10 @@ class GenerateRequest(BaseModel):
     num_images: int = Field(1, ge=1, le=4)
     # Optional LoRA adapter (HF repo id), applied on top of the base model.
     lora: Optional[str] = Field(None, max_length=512)
+    # img2img: source image as a data URL (≈ 20 MB max) and how much to change it
+    # (0 = keep the source, 1 = ignore it).
+    init_image: Optional[str] = Field(None, max_length=28_000_000)
+    strength: float = Field(0.6, ge=0.05, le=1.0)
 
     @field_validator("width", "height")
     @classmethod
@@ -188,19 +195,32 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
     job_id = str(uuid.uuid4())
     seed = req.seed if req.seed != -1 else random.randint(0, 2 ** 32 - 1)
 
+    init_path = None
+    width, height = req.width, req.height
+    if req.init_image:
+        try:
+            # The source keeps its aspect ratio, fitted in the requested size.
+            init_path, width, height = await asyncio.to_thread(
+                save_init_image, job_id, req.init_image, req.width, req.height
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     db_job = ImageJob(
         id=job_id,
         status="queued",
         model_id=req.model_id,
         prompt=req.prompt,
         negative_prompt=req.negative_prompt,
-        width=req.width,
-        height=req.height,
+        width=width,
+        height=height,
         steps=req.steps,
         cfg_scale=req.cfg_scale,
         seed=seed,
         sampler=req.sampler,
         num_images=req.num_images,
+        init_image_path=init_path,
+        strength=req.strength if init_path else None,
     )
     db.add(db_job)
     await db.commit()
@@ -212,18 +232,22 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "prompt": req.prompt,
         # Models like SDXL-Turbo/FLUX ignore (or reject) a negative prompt.
         "negative_prompt": req.negative_prompt if resolved.supports_negative_prompt else "",
-        "width": req.width,
-        "height": req.height,
+        "width": width,
+        "height": height,
         "steps": req.steps,
         "cfg_scale": req.cfg_scale,
         "seed": seed,
         "num_images": req.num_images,
         "sampler": req.sampler,
         "lora": req.lora,
+        "init_image_path": init_path,
+        "strength": req.strength,
     }
     try:
         position = worker.enqueue(queue_job)
     except asyncio.QueueFull:
+        if init_path:
+            await asyncio.to_thread(delete_job_files, [], init_path)
         db_job.status = "failed"
         db_job.error_message = "Queue full"
         await db.commit()
@@ -233,6 +257,9 @@ async def generate(req: GenerateRequest, request: Request, db: AsyncSession = De
         "job_id": job_id,
         "status": "queued",
         "seed": seed,
+        "width": width,
+        "height": height,
+        "init_image": init_image_url(job_id, init_path),
         "queue_size": request.app.state.generation_queue.qsize(),
         "queue_position": position,
     }
@@ -337,6 +364,8 @@ def _job_summary(j: ImageJob) -> dict:
         "seed": j.seed,
         "sampler": j.sampler,
         "num_images": j.num_images,
+        "init_image": init_image_url(j.id, j.init_image_path),
+        "strength": j.strength,
         "images": image_urls(j.output_paths, thumbnail=True),
         "full_images": image_urls(j.output_paths, thumbnail=False),
         "error_message": j.error_message,
@@ -405,10 +434,26 @@ async def delete_job(job_id: str, request: Request, db: AsyncSession = Depends(g
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status in ("queued", "running"):
         request.app.state.generation_worker.cancel(job_id)
-    await asyncio.to_thread(delete_job_files, job.output_paths)
+    await asyncio.to_thread(delete_job_files, job.output_paths, job.init_image_path)
     await db.delete(job)
     await db.commit()
     return {"deleted": job_id}
+
+
+@files_router.get("/files/init/{name}")
+async def get_init_image(name: str):
+    job_id = name.removesuffix(".png")
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Image not found")
+    path = init_image_path(job_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(
+        path, media_type="image/png",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 @files_router.get("/files/{name}")

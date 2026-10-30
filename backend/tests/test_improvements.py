@@ -209,3 +209,21 @@ async def test_recover_interrupted_work(monkeypatch, db_session):
         run = (await s.execute(select(TrainingRun))).scalar_one()
     assert jobs == {"j1": "failed", "j2": "completed"}
     assert run.status == "failed" and "restart" in run.error_message
+
+
+async def test_run_detached_returns_and_raises():
+    import threading
+
+    from core.tasks import run_detached
+
+    def work(x):
+        assert threading.current_thread().daemon  # never blocks shutdown
+        return x * 2
+
+    assert await run_detached(work, 21) == 42
+
+    def boom():
+        raise ValueError("nope")
+
+    with pytest.raises(ValueError):
+        await run_detached(boom)

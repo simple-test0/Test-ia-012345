@@ -61,7 +61,9 @@ async def download_huggingface_dataset(
                         break
             return total, num_classes, class_names, _dir_size(dataset_dir)
 
-        total, num_classes, class_names, size = await asyncio.to_thread(_download)
+        from core.tasks import run_detached
+
+        total, num_classes, class_names, size = await run_detached(_download)
         await _update_status(
             "ready", path=str(dataset_dir), num_samples=total,
             num_classes=num_classes, class_names=class_names, size_bytes=size,

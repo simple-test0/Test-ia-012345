@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     debug: bool = False
     # Serve frontend/dist from the backend when it has been built.
     serve_frontend: bool = True
+    # On shutdown, exit at once instead of waiting for a model download or a
+    # generation to finish (downloads resume next time).
+    fast_shutdown: bool = True
 
     # Paths. Only DATA_DIR usually needs setting: the sub-folders derive from it
     # unless they are overridden individually.

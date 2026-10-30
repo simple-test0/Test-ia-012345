@@ -144,7 +144,9 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
             )
             return {"local_path": path, "size_bytes": dir_size_bytes(Path(path))}
 
-        result = await asyncio.to_thread(_fetch)
+        from core.tasks import run_detached
+
+        result = await run_detached(_fetch)  # long download: never blocks shutdown
         if not await _update("ready", **result):
             # The model was removed from the UI while downloading: free the disk.
             await asyncio.to_thread(shutil.rmtree, _repo_cache_path(repo_id), True)

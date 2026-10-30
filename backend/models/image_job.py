@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, Enum, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, Enum, Float, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.database import Base
@@ -26,6 +26,9 @@ class ImageJob(Base):
     seed: Mapped[int] = mapped_column(Integer, default=-1)
     sampler: Mapped[str] = mapped_column(String(64), default="DPM++ 2M")
     num_images: Mapped[int] = mapped_column(Integer, default=1)
+    # img2img: source image on disk + how much of it to repaint (0-1).
+    init_image_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    strength: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     output_paths: Mapped[Optional[list]] = mapped_column(JSON, default=list)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

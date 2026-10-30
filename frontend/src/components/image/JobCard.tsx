@@ -221,6 +221,11 @@ function JobCard({ job, modelName, onUpdate, onRemove, onReuse, onOpenImage }: J
 
       <div className="flex items-center justify-between gap-2 text-[10px] text-gray-600">
         <span className="truncate" title={`seed ${job.seed}`}>
+          {job.init_image && (
+            <span className="mr-1 rounded bg-purple-500/20 px-1 text-purple-300" title={`img2img, force ${job.strength ?? ''}`}>
+              img2img
+            </span>
+          )}
           {modelName ?? job.model_id} · {job.width}×{job.height}
           {job.duration_ms ? ` · ${(job.duration_ms / 1000).toFixed(1)}s` : ''}
         </span>

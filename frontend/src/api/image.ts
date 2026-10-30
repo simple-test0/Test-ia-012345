@@ -35,6 +35,8 @@ export interface ImageJob {
   seed: number
   sampler?: string
   num_images?: number
+  init_image?: string | null // img2img source URL
+  strength?: number | null
   images: string[] // thumbnail URLs
   full_images: string[] // full-resolution URLs
   error_message?: string | null
@@ -55,6 +57,8 @@ export interface GenerateParams {
   sampler: string
   num_images: number
   lora?: string
+  init_image?: string // data URL (img2img)
+  strength?: number
 }
 
 export const getModels = (): Promise<ImageModel[]> => api.get('/image/models').then(r => r.data)
@@ -63,7 +67,15 @@ export const getSamplers = (): Promise<string[]> => api.get('/image/samplers').t
 
 export const generateImage = (
   params: GenerateParams,
-): Promise<{ job_id: string; status: JobStatus; seed: number; queue_position: number }> =>
+): Promise<{
+  job_id: string
+  status: JobStatus
+  seed: number
+  queue_position: number
+  width: number
+  height: number
+  init_image: string | null
+}> =>
   api.post('/image/generate', params).then(r => r.data)
 
 export const getJobs = (limit = 20, offset = 0): Promise<ImageJob[]> =>

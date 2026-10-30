@@ -45,6 +45,7 @@ AsyncSessionLocal = async_sessionmaker(
 # tables, so we add any missing ones here for seamless upgrades (SQLite).
 _ADDED_COLUMNS = {
     "diffusion_models": [("total_bytes", "BIGINT DEFAULT 0")],
+    "image_jobs": [("init_image_path", "TEXT"), ("strength", "FLOAT")],
 }
 
 

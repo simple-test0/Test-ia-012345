@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import {
   AlertTriangle, Bot, ChevronDown, ChevronRight, Copy, Loader2, Menu, Plus, RefreshCw, Send,
-  Trash2, Wrench, X,
+  Square, Trash2, Wrench, X,
 } from 'lucide-react'
 import {
   createSession,
@@ -47,7 +47,7 @@ type WsEvent =
   | { type: 'token'; content: string }
   | { type: 'tool_call'; id: string; tool_name: string; args: Record<string, unknown> }
   | { type: 'tool_result'; id: string; result: string }
-  | { type: 'message_complete' }
+  | { type: 'message_complete'; stopped?: boolean }
   | { type: 'error'; message: string }
 
 const DEFAULT_SYSTEM_PROMPT = 'You are a helpful AI assistant.'
@@ -308,6 +308,15 @@ export default function AgentPage() {
           })),
         )
       } else if (evt.type === 'message_complete') {
+        if (evt.stopped) {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1]
+            if (last?.role === 'assistant') {
+              return [...prev.slice(0, -1), { ...last, content: `${last.content.trimEnd()}\n\n*[interrompu]*` }]
+            }
+            return [...prev, { id: nextId(), role: 'assistant', content: '*[interrompu]*', tool_calls: [] }]
+          })
+        }
         finishTurn()
         refreshSessions() // message count / auto-generated title
       } else if (evt.type === 'error') {
@@ -319,7 +328,20 @@ export default function AgentPage() {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  const handleNewSession = async (): Promise<string | null> => {
+  // Shared while a creation is in flight: a click followed by a quick Enter
+  // (or a double click) must not create two sessions.
+  const creating = useRef<Promise<string | null> | null>(null)
+
+  const handleNewSession = (): Promise<string | null> => {
+    if (!creating.current) {
+      creating.current = createNewSession().finally(() => {
+        creating.current = null
+      })
+    }
+    return creating.current
+  }
+
+  const createNewSession = async (): Promise<string | null> => {
     try {
       const session = await createSession({
         name: `Session ${sessions.length + 1}`,
@@ -369,15 +391,14 @@ export default function AgentPage() {
       return
     }
 
-    let sessionId = selectedSessionId
-    if (!sessionId) {
+    if (!selectedSessionId || creating.current) {
       // Typing straight away creates a session: no extra click needed.
-      sessionId = await handleNewSession()
+      const sessionId = await handleNewSession()
       if (!sessionId) return
-      pendingSend.current = text
+      pendingSend.current = text // sent as soon as its socket opens
     } else if (!send({ content: text, model_id: selectedModel })) {
-      toast.error('Connexion au serveur perdue — nouvelle tentative en cours, réessayez dans un instant.')
-      return
+      // Socket still connecting (or reconnecting): send it once it is open.
+      pendingSend.current = text
     }
 
     stickToBottom.current = true
@@ -604,15 +625,26 @@ export default function AgentPage() {
             }}
             onKeyDown={handleKeyDown}
           />
-          <button
-            className="shrink-0 flex items-center justify-center h-10 w-10 rounded-xl bg-purple-600
-              hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            onClick={handleSend}
-            disabled={!canChat || !inputText.trim() || busy}
-            title="Envoyer"
-          >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <Send className="h-4 w-4 text-white" />}
-          </button>
+          {busy ? (
+            <button
+              className="shrink-0 flex items-center justify-center h-10 w-10 rounded-xl bg-gray-700
+                hover:bg-red-600 transition-colors"
+              onClick={() => send({ type: 'stop' })}
+              title="Arrêter la réponse"
+            >
+              <Square className="h-4 w-4 fill-current text-white" />
+            </button>
+          ) : (
+            <button
+              className="shrink-0 flex items-center justify-center h-10 w-10 rounded-xl bg-purple-600
+                hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              onClick={handleSend}
+              disabled={!canChat || !inputText.trim()}
+              title="Envoyer"
+            >
+              <Send className="h-4 w-4 text-white" />
+            </button>
+          )}
         </div>
       </main>
 

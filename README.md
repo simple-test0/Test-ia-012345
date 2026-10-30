@@ -5,7 +5,7 @@ A local, all-in-one AI web app: **image generation**, **LLM agents with tools**,
 
 - **Backend:** FastAPI (async), SQLAlchemy 2.0 + SQLite (WAL), WebSockets for live progress.
 - **Frontend:** React + Vite + TypeScript + Tailwind.
-- **Runs on:** Linux, Windows (Git Bash / WSL / Docker) and macOS — NVIDIA GPU (CUDA),
+- **Runs on:** Linux, Windows (native `start.bat`, WSL or Docker) and macOS — NVIDIA GPU (CUDA),
   Apple Silicon GPU (MPS) or CPU only.
 
 ## Quick start
@@ -34,6 +34,13 @@ That's it. The launcher:
 The dev server also listens on the LAN, so the UI works from a phone or tablet
 (`http://<your-ip>:5173`).
 
+### Windows
+
+Double-click **`start.bat`** (or run `.\start.ps1` in PowerShell). Same behaviour as
+`start.sh`: picks Python 3.10–3.12 via the `py` launcher, installs the CUDA build when
+`nvidia-smi` works, opens the browser. Options: `start.bat -Prod`, `-NoBrowser`,
+`-BackendPort 8010`, `-TorchVariant cpu`.
+
 ### Requirements
 - Python **3.10, 3.11 or 3.12** (PyTorch 2.4 has no wheels for 3.13 yet), Node **18+**
 - Optional: NVIDIA GPU + driver, or an Apple Silicon Mac, for fast generation/training
@@ -60,6 +67,9 @@ npm run dev
 ### 🖼️ Image generation
 - Stable Diffusion 1.5 / SDXL / SDXL-Turbo, FLUX.1 and SD 3.5 (gated) — plus **any**
   text-to-image model from Hugging Face, searchable and downloadable from the UI.
+- **Image-to-image**: drop, paste (Ctrl+V) or pick a source image — or reuse any result
+  with "Utiliser comme source" — and choose how strongly it is transformed. The source keeps
+  its aspect ratio; reusing a job's settings restores its source too.
 - Queue that never blocks: live position in queue, **cancel** queued or running jobs.
 - Live step previews (cheap latent→RGB approximation, no extra VAE pass per step).
 - Picking a model applies its recommended steps / CFG / size; aspect-ratio presets.
@@ -73,6 +83,8 @@ npm run dev
   (safe AST evaluator), `code_executor` (disabled by default — see Security).
 - Conversations are saved: history reloads, per-session system prompt, auto-titled
   sessions, delete; typing a message creates a session automatically.
+- **Stop** button: interrupts the answer (Ollama stops generating) and keeps what was
+  already written.
 
 ### 🧪 Labs
 - Train CNN / RNN / LSTM / GRU / Transformer / ViT in an isolated process (CUDA, MPS or CPU)
@@ -89,6 +101,8 @@ npm run dev
   instead of spinning forever.
 - WebSockets reconnect automatically (with backoff) and resync state; polling fallback.
 - Heavy work (model loading, generation, tools, file I/O) never runs on the event loop.
+- Ctrl+C stops the app within seconds even during a multi-GB model download (it resumes
+  next time); set `FAST_SHUTDOWN=false` to wait for running work instead.
 
 ## Configuration
 

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ChevronLeft, ChevronRight, Download, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, ImageUp, X } from 'lucide-react'
 import { withToken } from '../../api/client'
 
 interface LightboxProps {
@@ -8,9 +8,10 @@ interface LightboxProps {
   onIndexChange: (i: number) => void
   onClose: () => void
   caption?: string
+  onUseAsSource?: (index: number) => void
 }
 
-export default function Lightbox({ images, index, onIndexChange, onClose, caption }: LightboxProps) {
+export default function Lightbox({ images, index, onIndexChange, onClose, caption, onUseAsSource }: LightboxProps) {
   const count = images.length
   const prev = () => onIndexChange((index - 1 + count) % count)
   const next = () => onIndexChange((index + 1) % count)
@@ -37,7 +38,16 @@ export default function Lightbox({ images, index, onIndexChange, onClose, captio
       role="dialog"
       aria-modal="true"
     >
-      <div className="absolute right-4 top-4 flex gap-2" onClick={(e) => e.stopPropagation()}>
+      <div className="absolute right-4 top-4 flex flex-wrap justify-end gap-2 pl-4" onClick={(e) => e.stopPropagation()}>
+        {onUseAsSource && (
+          <button
+            onClick={() => onUseAsSource(index)}
+            className="flex items-center gap-1.5 rounded-lg bg-gray-800/80 px-3 py-2 text-xs text-gray-100 hover:bg-gray-700"
+            title="Partir de cette image pour une nouvelle génération (img2img)"
+          >
+            <ImageUp className="h-4 w-4" /> Utiliser comme source
+          </button>
+        )}
         <a
           href={src}
           download={fileName}

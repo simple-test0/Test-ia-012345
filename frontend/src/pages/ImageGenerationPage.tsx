@@ -11,10 +11,11 @@ import {
   type ImageJob,
   type ImageModel,
 } from '../api/image'
-import { errorMessage } from '../api/client'
+import api, { errorMessage } from '../api/client'
 import HFModelBrowser from '../components/image/HFModelBrowser'
 import JobCard from '../components/image/JobCard'
 import Lightbox from '../components/image/Lightbox'
+import InitImagePicker, { imageToDataUrl } from '../components/image/InitImagePicker'
 import { toast } from '../components/ui/toast'
 import { usePersistentState } from '../hooks/usePersistentState'
 
@@ -46,6 +47,7 @@ interface FormState {
   seed: number
   numImages: number
   lora: string
+  strength: number
 }
 
 const DEFAULT_FORM: FormState = {
@@ -60,6 +62,7 @@ const DEFAULT_FORM: FormState = {
   seed: -1,
   numImages: 1,
   lora: '',
+  strength: 0.6,
 }
 
 const selectCls = `w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-2.5 pr-8
@@ -76,7 +79,11 @@ const isUsefulTag = (t: string) => !t.includes(':') && !NOISY_TAGS.has(t)
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ImageGenerationPage() {
-  const [form, setForm] = usePersistentState<FormState>('aistudio.image.form', DEFAULT_FORM)
+  const [storedForm, setForm] = usePersistentState<FormState>('aistudio.image.form', DEFAULT_FORM)
+  // Fill fields added in newer versions so old saved settings keep working.
+  const form: FormState = { ...DEFAULT_FORM, ...storedForm }
+  // img2img source (not persisted: it can be several MB).
+  const [initImage, setInitImage] = useState<string | null>(null)
   const set = useCallback(
     <K extends keyof FormState>(key: K, value: FormState[K]) =>
       setForm((f) => ({ ...f, [key]: value })),
@@ -245,12 +252,26 @@ export default function ImageGenerationPage() {
         height: job.height,
         seed: job.seed,
         numImages: job.num_images ?? f.numImages,
+        strength: job.strength ?? f.strength,
       }))
+      if (job.init_image) {
+        loadSource(job.init_image)
+      }
       promptRef.current?.focus()
       toast.info('Réglages chargés (seed incluse) — modifiez puis générez.')
     },
     [models, setForm],
   )
+
+  // Load a server image (result or previous source) as the img2img source.
+  async function loadSource(url: string) {
+    try {
+      const res = await api.get(url.replace(/^\/api\/v1/, ''), { responseType: 'blob', baseURL: '/api/v1' })
+      setInitImage(await imageToDataUrl(res.data as Blob))
+    } catch (e) {
+      toast.error(`Image source indisponible : ${errorMessage(e)}`)
+    }
+  }
 
   const openImage = useCallback((job: ImageJob, index: number) => setLightbox({ job, index }), [])
 
@@ -275,6 +296,7 @@ export default function ImageGenerationPage() {
       seed: form.seed,
       num_images: form.numImages,
       lora: form.lora.trim() || undefined,
+      ...(initImage ? { init_image: initImage, strength: form.strength } : {}),
     }
 
     try {
@@ -285,13 +307,15 @@ export default function ImageGenerationPage() {
         model_id: params.model_id,
         prompt: params.prompt,
         negative_prompt: params.negative_prompt,
-        width: params.width,
-        height: params.height,
+        width: result.width ?? params.width,
+        height: result.height ?? params.height,
         steps: params.steps,
         cfg_scale: params.cfg_scale,
         seed: result.seed ?? params.seed,
         sampler: params.sampler,
         num_images: params.num_images,
+        init_image: result.init_image,
+        strength: initImage ? form.strength : null,
         images: [],
         full_images: [],
         created_at: new Date().toISOString(),
@@ -557,6 +581,13 @@ export default function ImageGenerationPage() {
           </div>
         </div>
 
+        <InitImagePicker
+          value={initImage}
+          onChange={setInitImage}
+          strength={form.strength}
+          onStrengthChange={(v) => set('strength', v)}
+        />
+
         {/* LoRA */}
         <div className="flex flex-col gap-1">
           <label htmlFor="lora" className="text-xs font-medium text-gray-400">
@@ -633,6 +664,12 @@ export default function ImageGenerationPage() {
           onIndexChange={(index) => setLightbox((lb) => (lb ? { ...lb, index } : lb))}
           onClose={() => setLightbox(null)}
           caption={`${lightbox.job.prompt} — seed ${lightbox.job.seed}`}
+          onUseAsSource={(i) => {
+            loadSource(lightbox.job.full_images[i]).then(() =>
+              toast.success('Image définie comme source — ajustez le prompt puis générez.'),
+            )
+            setLightbox(null)
+          }}
         />
       )}
     </div>

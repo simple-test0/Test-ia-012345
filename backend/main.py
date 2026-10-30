@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -61,6 +62,16 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     logger.info("AI Studio backend stopped")
+
+    from core.tasks import detached_running
+
+    if settings.fast_shutdown and detached_running():
+        # Hugging Face downloads use their own thread pool, which Python would
+        # wait for before exiting (minutes for a large model). Nothing left
+        # needs saving at this point, so leave right away.
+        logger.info("Interrupting in-progress downloads/generation and exiting now")
+        logging.shutdown()
+        os._exit(0)
 
 
 app = FastAPI(

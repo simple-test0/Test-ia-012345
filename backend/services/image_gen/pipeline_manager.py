@@ -88,9 +88,10 @@ class PipelineManager:
                 del oldest_pipe
                 _free_memory()
 
-            pipe = await asyncio.get_running_loop().run_in_executor(
-                None, lambda: self._load_pipeline(model_id, repo_id)
-            )
+            from core.tasks import run_detached
+
+            # May download several GB on first use: detached so shutdown never waits.
+            pipe = await run_detached(self._load_pipeline, model_id, repo_id)
             self._loaded[model_id] = pipe
             return pipe
 

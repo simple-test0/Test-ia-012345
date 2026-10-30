@@ -19,9 +19,19 @@ def client():
     from fastapi.testclient import TestClient
 
     from main import app
+    from services.image_gen.pipeline_manager import pipeline_manager
 
-    with TestClient(app) as c:
-        yield c
+    async def no_model(model_id, repo_id):
+        # Never download multi-GB weights from the test suite.
+        raise RuntimeError("model loading disabled in tests")
+
+    original = pipeline_manager.get_pipeline
+    pipeline_manager.get_pipeline = no_model
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        pipeline_manager.get_pipeline = original
 
 
 def test_health(client):
@@ -218,3 +228,73 @@ def test_run_validation(client):
         "name": "bad", "architecture": "cnn", "training_config": {"epochs": 0},
     })
     assert r.status_code == 422
+
+
+def _png_data_url(w: int, h: int) -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (200, 30, 30)).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def test_img2img_request_fits_source_aspect(client):
+    r = client.post("/api/v1/image/generate", json={
+        "model_id": "sd15", "prompt": "x", "steps": 1, "width": 512, "height": 512,
+        "init_image": _png_data_url(1000, 500), "strength": 0.5,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["width"], body["height"]) == (512, 256)  # 2:1 kept, multiples of 8
+    assert body["init_image"].endswith(f"{body['job_id']}.png")
+    img = client.get(body["init_image"])
+    assert img.status_code == 200 and img.headers["content-type"] == "image/png"
+    job = client.get(f"/api/v1/image/jobs/{body['job_id']}").json()
+    assert job["strength"] == 0.5 and job["init_image"]
+    client.post(f"/api/v1/image/jobs/{body['job_id']}/cancel")
+    assert client.delete(f"/api/v1/image/jobs/{body['job_id']}").status_code == 200
+    assert client.get(body["init_image"]).status_code == 404  # source deleted too
+
+
+def test_img2img_rejects_garbage(client):
+    r = client.post("/api/v1/image/generate", json={
+        "model_id": "sd15", "prompt": "x", "init_image": "data:image/png;base64,bm90IGFuIGltYWdl",
+    })
+    assert r.status_code == 422
+    assert client.get("/api/v1/image/files/init/not-a-uuid.png").status_code == 404
+
+
+def test_agent_stop_keeps_partial_answer(client, monkeypatch):
+    import asyncio
+
+    from services.agent.ollama_client import OllamaClient
+
+    async def slow_chat(self, model, messages, tools=None, on_token=None, **kw):
+        for i in range(200):
+            await on_token(f"w{i} ")
+            await asyncio.sleep(0.02)
+        return {"content": "never", "tool_calls": []}
+
+    monkeypatch.setattr(OllamaClient, "chat", slow_chat)
+    sid = client.post("/api/v1/agent/sessions", json={"name": "s", "model_id": "m"}).json()["id"]
+    with client.websocket_connect(f"/ws/agent/{sid}") as ws:
+        ws.send_json({"content": "hello", "model_id": "m"})
+        assert ws.receive_json()["type"] == "token"
+        ws.send_json({"content": "second while busy", "model_id": "m"})
+        seen_busy = False
+        ws.send_json({"type": "stop"})
+        while True:
+            evt = ws.receive_json()
+            if evt["type"] == "error" and "already" in evt["message"]:
+                seen_busy = True
+            if evt["type"] == "message_complete":
+                break
+        assert evt["stopped"] is True and "[interrompu]" in evt["full_content"]
+        assert seen_busy
+    saved = client.get(f"/api/v1/agent/sessions/{sid}").json()["messages"]
+    assert [m["role"] for m in saved] == ["user", "assistant"]
+    assert saved[1]["content"].startswith("w0") and "never" not in saved[1]["content"]
+    client.delete(f"/api/v1/agent/sessions/{sid}")

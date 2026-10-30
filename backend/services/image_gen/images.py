@@ -83,7 +83,12 @@ def image_urls(output_paths, thumbnail: bool) -> List[str]:
     return urls
 
 
-def delete_job_files(output_paths) -> None:
+def delete_job_files(output_paths, init_path=None) -> None:
+    if init_path:
+        try:
+            Path(init_path).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug(f"Could not delete {init_path}: {exc}")
     for p in output_paths or []:
         path = Path(p)
         for f in (path, thumb_path_for(path)):
@@ -118,3 +123,53 @@ def latents_preview(latents, is_xl: bool, size: int = 256) -> Optional[Image.Ima
     except Exception as exc:
         logger.debug(f"Latent preview failed: {exc}")
         return None
+
+
+# ── img2img source images ─────────────────────────────────────────────────────
+
+MAX_INIT_SIDE = 2048
+_UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
+
+
+def init_image_path(job_id: str) -> Path:
+    return settings.images_dir / "init" / f"{job_id}.png"
+
+
+def save_init_image(job_id: str, data_url: str, max_w: int, max_h: int) -> tuple:
+    """Decode a `data:` URL (or bare base64), fit it in max_w x max_h keeping
+    its aspect ratio (multiples of 8), save it as PNG.
+
+    Returns (path, width, height). Raises ValueError on invalid input.
+    """
+    import base64
+    import binascii
+    import io
+
+    payload = data_url.split(",", 1)[1] if data_url.startswith("data:") else data_url
+    try:
+        raw = base64.b64decode(payload, validate=False)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("init_image is not valid base64") from exc
+    try:
+        with Image.open(io.BytesIO(raw)) as src:
+            src.load()
+            img = src.convert("RGB")
+    except Exception as exc:
+        raise ValueError("init_image is not a readable image (PNG, JPEG, WebP…)") from exc
+
+    scale = min(max_w / img.width, max_h / img.height, MAX_INIT_SIDE / max(img.size))
+    w = max(64, int(img.width * scale) // 8 * 8)
+    h = max(64, int(img.height * scale) // 8 * 8)
+    if (w, h) != img.size:
+        img = img.resize((w, h), Image.LANCZOS)
+
+    path = init_image_path(job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(path)
+    return str(path), w, h
+
+
+def init_image_url(job_id: str, path) -> Optional[str]:
+    if not path or not _UUID_RE.match(job_id):
+        return None
+    return f"/api/v1/image/files/init/{job_id}.png"

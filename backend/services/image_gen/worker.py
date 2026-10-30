@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 
 from api.websockets.manager import ws_manager
 from core.config import utcnow
+from core.tasks import run_detached
 from services.image_gen.images import image_urls, latents_preview, save_images
 from services.image_gen.pipeline_manager import apply_sampler, image_to_data_url, pipeline_manager
 
@@ -116,14 +117,10 @@ class GenerationWorker:
 
         start = time.monotonic()
         seed = job["seed"] if job.get("seed", -1) != -1 else random.randint(0, 2**32 - 1)
-        loop = self._loop
-
         try:
             pipe = await pipeline_manager.get_pipeline(job["model_id"], job["repo_id"])
             # Everything below touches torch: keep it off the event loop.
-            output_paths = await loop.run_in_executor(
-                None, lambda: self._generate(pipe, job, seed)
-            )
+            output_paths = await run_detached(self._generate, pipe, job, seed)
         except JobCancelled:
             await self._finish(job, "cancelled", [], None, start, seed)
             return
@@ -141,6 +138,11 @@ class GenerationWorker:
         job_id = job["id"]
         total_steps = job["steps"]
         is_xl = "XL" in type(pipe).__name__
+        init_path = job.get("init_image_path")
+        strength = float(job.get("strength") or 0.6)
+        if init_path:
+            # img2img only runs the last `strength` fraction of the schedule.
+            total_steps = max(1, min(int(job["steps"] * strength), job["steps"]))
         last_preview = {"t": 0.0}
 
         if job.get("sampler"):
@@ -190,14 +192,25 @@ class GenerationWorker:
 
         kwargs = dict(
             prompt=job["prompt"],
-            num_inference_steps=total_steps,
+            num_inference_steps=job["steps"],
             generator=generator,
-            width=job["width"],
-            height=job["height"],
             num_images_per_prompt=job.get("num_images", 1),
             callback_on_step_end=step_callback,
             callback_on_step_end_tensor_inputs=["latents"],
         )
+        run_pipe = pipe
+        if init_path:
+            from PIL import Image
+
+            run_pipe = _img2img_pipeline(pipe)
+            if job.get("sampler"):
+                apply_sampler(run_pipe, job["sampler"])  # own scheduler object
+            with Image.open(init_path) as src:
+                kwargs["image"] = src.convert("RGB")  # already sized by the route
+            kwargs["strength"] = strength
+        else:
+            kwargs["width"] = job["width"]
+            kwargs["height"] = job["height"]
         if job.get("negative_prompt"):
             kwargs["negative_prompt"] = job["negative_prompt"]
         if job.get("cfg_scale", 7.5) > 0:
@@ -206,13 +219,13 @@ class GenerationWorker:
         try:
             with torch.inference_mode():
                 try:
-                    result = pipe(**kwargs)
+                    result = run_pipe(**kwargs)
                 except TypeError as exc:
                     # Pipelines without negative-prompt support (FLUX…).
                     if "negative_prompt" not in str(exc) or "negative_prompt" not in kwargs:
                         raise
                     kwargs.pop("negative_prompt")
-                    result = pipe(**kwargs)
+                    result = run_pipe(**kwargs)
         finally:
             # Pipelines are cached/reused — remove the LoRA so it doesn't leak
             # into the next job.
@@ -254,6 +267,29 @@ class GenerationWorker:
             await ws_manager.send(job_id, {"type": "cancelled", "job_id": job_id})
         else:
             await ws_manager.send(job_id, {"type": "error", "job_id": job_id, "message": error})
+
+
+def _img2img_pipeline(pipe):
+    """Image-to-image variant sharing the loaded weights (no extra memory),
+    created once per text-to-image pipeline."""
+    cached = getattr(pipe, "_aistudio_img2img", None)
+    if cached is not None:
+        return cached
+    from diffusers import AutoPipelineForImage2Image
+
+    try:
+        i2i = AutoPipelineForImage2Image.from_pipe(pipe)
+    except Exception as exc:
+        raise RuntimeError(
+            f"This model does not support image-to-image ({type(pipe).__name__}): {exc}"
+        ) from exc
+    try:
+        i2i.set_progress_bar_config(disable=True)
+    except Exception:
+        pass
+    i2i._aistudio_device = getattr(pipe, "_aistudio_device", "cpu")
+    pipe._aistudio_img2img = i2i
+    return i2i
 
 
 def _friendly_error(exc: Exception) -> str:
