@@ -80,18 +80,21 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
     diffusion_dir = settings.models_dir / "diffusion"
     diffusion_dir.mkdir(parents=True, exist_ok=True)
 
-    async def _update(status: str, **fields) -> None:
+    async def _update(status: str, **fields) -> bool:
+        """Update the record; False if it was deleted meanwhile."""
         async with db_session() as db:
             result = await db.execute(
                 select(DiffusionModel).where(DiffusionModel.id == db_id)
             )
             rec = result.scalar_one_or_none()
-            if rec:
-                rec.status = status
-                for k, v in fields.items():
-                    if v is not None:
-                        setattr(rec, k, v)
-                await db.commit()
+            if rec is None:
+                return False
+            rec.status = status
+            for k, v in fields.items():
+                if v is not None:
+                    setattr(rec, k, v)
+            await db.commit()
+            return True
 
     try:
         def _probe():
@@ -126,7 +129,7 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
                 )
             return meta
 
-        meta = await asyncio.get_event_loop().run_in_executor(None, _probe)
+        meta = await asyncio.to_thread(_probe)
         # Persist metadata + estimated total so the status endpoint can report progress.
         await _update("downloading", **meta)
 
@@ -141,8 +144,12 @@ async def download_hf_model(db_id: str, repo_id: str, db_session) -> None:
             )
             return {"local_path": path, "size_bytes": dir_size_bytes(Path(path))}
 
-        result = await asyncio.get_event_loop().run_in_executor(None, _fetch)
-        await _update("ready", **result)
+        from core.tasks import run_detached
+
+        result = await run_detached(_fetch)  # long download: never blocks shutdown
+        if not await _update("ready", **result):
+            # The model was removed from the UI while downloading: free the disk.
+            await asyncio.to_thread(shutil.rmtree, _repo_cache_path(repo_id), True)
 
     except Exception as exc:
         message = str(exc)

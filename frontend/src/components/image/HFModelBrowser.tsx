@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Search, Download, Lock, Loader2, X, Heart, ArrowDownToLine } from 'lucide-react'
 import { searchHFModels, downloadHFModel } from '../../api/image'
 import { toast } from '../ui/toast'
+import { errorMessage } from '../../api/client'
 
 interface HFResult {
   repo_id: string
@@ -47,7 +48,7 @@ export default function HFModelBrowser({ open, onClose, onDownloadStarted }: HFM
       setError(null)
       searchHFModels(q)
         .then((data: HFResult[]) => setResults(data))
-        .catch(() => setError('La recherche a échoué.'))
+        .catch((e) => setError(errorMessage(e, 'La recherche a échoué.')))
         .finally(() => setSearching(false))
     }, 400)
     return () => {
@@ -61,8 +62,8 @@ export default function HFModelBrowser({ open, onClose, onDownloadStarted }: HFM
       const res = await downloadHFModel({ repo_id: r.repo_id })
       onDownloadStarted(res.id)
       toast.info(`Téléchargement de ${r.name} démarré…`)
-    } catch {
-      setError(`Échec du téléchargement de ${r.repo_id}`)
+    } catch (e) {
+      setError(errorMessage(e, `Échec du téléchargement de ${r.repo_id}`))
       setDownloading((prev) => {
         const next = new Set(prev)
         next.delete(r.repo_id)
@@ -71,11 +72,20 @@ export default function HFModelBrowser({ open, onClose, onDownloadStarted }: HFM
     }
   }
 
+  // Close with Escape.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-2xl border border-gray-800 bg-gray-950 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-2xl border border-gray-800 bg-gray-950 shadow-xl"
+        onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-800 p-4">
           <h3 className="text-sm font-semibold text-gray-200">Rechercher un modèle sur Hugging Face</h3>

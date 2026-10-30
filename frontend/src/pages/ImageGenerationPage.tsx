@@ -1,246 +1,164 @@
-import { useEffect, useRef, useState } from 'react'
-import { Loader2, ImageIcon, ChevronDown, Plus } from 'lucide-react'
-import { generateImage, getModels, getJobs, getHFModelStatus } from '../api/image'
-import { useWebSocket } from '../hooks/useWebSocket'
-import { wsUrl } from '../api/client'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, Dices, ImageIcon, Loader2, Lock, Plus, Sparkles, Trash2 } from 'lucide-react'
+import {
+  deleteHFModel,
+  generateImage,
+  getHFModelStatus,
+  getJobs,
+  getModels,
+  getSamplers,
+  type GenerateParams,
+  type ImageJob,
+  type ImageModel,
+} from '../api/image'
+import api, { errorMessage } from '../api/client'
 import HFModelBrowser from '../components/image/HFModelBrowser'
+import JobCard from '../components/image/JobCard'
+import Lightbox from '../components/image/Lightbox'
+import InitImagePicker, { imageToDataUrl } from '../components/image/InitImagePicker'
 import { toast } from '../components/ui/toast'
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface ImageModel {
-  id: string
-  name: string
-  source: 'curated' | 'downloaded'
-  recommended: boolean
-  status: 'ready' | 'downloading' | 'error'
-  compatible: boolean
-  repo_id: string
-  tags?: string[]
-  gated?: boolean
-}
-
-interface ImageJob {
-  job_id: string
-  status: 'queued' | 'running' | 'completed' | 'failed'
-  prompt: string
-  created_at: string
-  images?: string[] // base64 data URLs
-  queue_position?: number
-}
-
-interface GenerateParams {
-  prompt: string
-  negative_prompt: string
-  model_id: string
-  sampler: string
-  steps: number
-  cfg_scale: number
-  width: number
-  height: number
-  seed: number
-  num_images: number
-  lora?: string
-}
-
-interface WsStepEvent {
-  type: 'step'
-  step: number
-  total_steps: number
-  preview?: string // base64
-}
-
-interface WsCompletedEvent {
-  type: 'completed'
-  images: string[] // base64
-}
-
-interface WsQueueEvent {
-  type: 'queued'
-  position: number
-}
-
-type WsEvent = WsStepEvent | WsCompletedEvent | WsQueueEvent
+import { usePersistentState } from '../hooks/usePersistentState'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const SAMPLERS = ['DPM++ 2M', 'Euler', 'Euler a', 'DDIM', 'LMS']
-const PIXEL_SIZES = [512, 768, 1024]
+const DEFAULT_SAMPLERS = ['DPM++ 2M', 'DPM++ 2M Karras', 'Euler', 'Euler a', 'DDIM', 'LMS']
+const PIXEL_SIZES = [512, 576, 640, 704, 768, 832, 896, 960, 1024, 1152, 1280, 1536]
 const NUM_IMAGES_OPTIONS = [1, 2, 3, 4]
+const PAGE_SIZE = 24
+const MAX_SEED = 2 ** 32 - 1
 
-const STATUS_COLORS: Record<ImageJob['status'], string> = {
-  queued: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40',
-  running: 'bg-blue-500/20 text-blue-300 border border-blue-500/40',
-  completed: 'bg-green-500/20 text-green-300 border border-green-500/40',
-  failed: 'bg-red-500/20 text-red-300 border border-red-500/40',
+const ASPECTS: { label: string; w: number; h: number }[] = [
+  { label: '1:1', w: 1, h: 1 },
+  { label: '3:2', w: 3, h: 2 },
+  { label: '2:3', w: 2, h: 3 },
+  { label: '16:9', w: 16, h: 9 },
+  { label: '9:16', w: 9, h: 16 },
+]
+
+interface FormState {
+  prompt: string
+  negativePrompt: string
+  modelId: string
+  sampler: string
+  steps: number
+  cfgScale: number
+  width: number
+  height: number
+  seed: number
+  numImages: number
+  lora: string
+  strength: number
 }
 
-// ─── Active Job WS Progress ───────────────────────────────────────────────────
-
-interface ActiveJobProgressProps {
-  jobId: string
-  onCompleted: (images: string[]) => void
+const DEFAULT_FORM: FormState = {
+  prompt: '',
+  negativePrompt: '',
+  modelId: '',
+  sampler: 'DPM++ 2M',
+  steps: 20,
+  cfgScale: 7.5,
+  width: 512,
+  height: 512,
+  seed: -1,
+  numImages: 1,
+  lora: '',
+  strength: 0.6,
 }
 
-function ActiveJobProgress({ jobId, onCompleted }: ActiveJobProgressProps) {
-  const [step, setStep] = useState(0)
-  const [totalSteps, setTotalSteps] = useState(0)
-  const [preview, setPreview] = useState<string | null>(null)
-  const onCompletedRef = useRef(onCompleted)
-  onCompletedRef.current = onCompleted
+const selectCls = `w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-2.5 pr-8
+  text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer`
+const inputCls = `rounded-xl bg-gray-900 border border-gray-800 p-2.5 text-sm text-gray-100
+  focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600`
 
-  useWebSocket(wsUrl(`/ws/image/${jobId}`), {
-    onMessage: (raw) => {
-      const evt = raw as WsEvent
-      if (evt.type === 'step') {
-        setStep(evt.step)
-        setTotalSteps(evt.total_steps)
-        if (evt.preview) setPreview(evt.preview)
-      } else if (evt.type === 'completed') {
-        onCompletedRef.current(evt.images)
-      }
-    },
-  })
+const roundTo8 = (n: number) => Math.max(64, Math.round(n / 8) * 8)
 
-  const pct = totalSteps > 0 ? Math.round((step / totalSteps) * 100) : 0
-
-  return (
-    <div className="mt-2 space-y-2">
-      <div className="flex items-center justify-between text-xs text-gray-400">
-        <span>Step {step} / {totalSteps}</span>
-        <span>{pct}%</span>
-      </div>
-      <div className="h-2 w-full rounded-full bg-gray-700">
-        <div
-          className="h-2 rounded-full bg-purple-500 transition-all duration-300"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      {preview && (
-        <img
-          src={preview}
-          alt="Latent preview"
-          className="mt-2 w-full rounded-lg object-contain opacity-80"
-        />
-      )}
-    </div>
-  )
-}
-
-// ─── Job Card ─────────────────────────────────────────────────────────────────
-
-interface JobCardProps {
-  job: ImageJob
-  onJobCompleted: (jobId: string, images: string[]) => void
-}
-
-function JobCard({ job, onJobCompleted }: JobCardProps) {
-  return (
-    <div className="rounded-xl bg-gray-900 border border-gray-800 p-3 flex flex-col gap-2">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-xs text-gray-300 line-clamp-2 flex-1">{job.prompt}</p>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_COLORS[job.status]}`}>
-          {job.status}
-        </span>
-      </div>
-
-      {job.status === 'running' && (
-        <ActiveJobProgress
-          jobId={job.job_id}
-          onCompleted={(images) => onJobCompleted(job.job_id, images)}
-        />
-      )}
-
-      {job.status === 'completed' && job.images && job.images.length > 0 && (
-        <div className={`grid gap-1 ${job.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
-          {job.images.map((img, i) => (
-            <img
-              key={i}
-              src={img}
-              alt={`Generated ${i + 1}`}
-              className="w-full rounded-lg object-cover aspect-square"
-            />
-          ))}
-        </div>
-      )}
-
-      {job.status === 'completed' && (!job.images || job.images.length === 0) && (
-        <div className="flex h-24 items-center justify-center rounded-lg bg-gray-800">
-          <ImageIcon className="h-8 w-8 text-gray-600" />
-        </div>
-      )}
-
-      {job.status === 'queued' && job.queue_position !== undefined && (
-        <p className="text-xs text-yellow-400">Queue position: {job.queue_position}</p>
-      )}
-
-      {job.status === 'failed' && (
-        <p className="text-xs text-red-400">Generation failed</p>
-      )}
-
-      <p className="text-[10px] text-gray-600">{new Date(job.created_at).toLocaleString()}</p>
-    </div>
-  )
-}
+// Hugging Face tags include lots of metadata ("license:mit", "diffusers"…).
+const NOISY_TAGS = new Set(['diffusers', 'safetensors', 'endpoints_compatible', 'text-to-image', 'en', 'arxiv'])
+const isUsefulTag = (t: string) => !t.includes(':') && !NOISY_TAGS.has(t)
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ImageGenerationPage() {
-  // Form state
-  const [prompt, setPrompt] = useState('')
-  const [negativePrompt, setNegativePrompt] = useState('')
+  const [storedForm, setForm] = usePersistentState<FormState>('aistudio.image.form', DEFAULT_FORM)
+  // Fill fields added in newer versions so old saved settings keep working.
+  const form: FormState = { ...DEFAULT_FORM, ...storedForm }
+  // img2img source (not persisted: it can be several MB).
+  const [initImage, setInitImage] = useState<string | null>(null)
+  const set = useCallback(
+    <K extends keyof FormState>(key: K, value: FormState[K]) =>
+      setForm((f) => ({ ...f, [key]: value })),
+    [setForm],
+  )
+
   const [models, setModels] = useState<ImageModel[]>([])
-  const [selectedModel, setSelectedModel] = useState('')
-  const [sampler, setSampler] = useState('DPM++ 2M')
-  const [steps, setSteps] = useState(20)
-  const [cfgScale, setCfgScale] = useState(7.5)
-  const [width, setWidth] = useState(512)
-  const [height, setHeight] = useState(512)
-  const [seed, setSeed] = useState(-1)
-  const [numImages, setNumImages] = useState(1)
-  const [lora, setLora] = useState('')
-
-  // UI state
-  const [loading, setLoading] = useState(false)
-  const [queuePosition, setQueuePosition] = useState<number | null>(null)
+  const [samplers, setSamplers] = useState<string[]>(DEFAULT_SAMPLERS)
+  const [submitting, setSubmitting] = useState(false)
   const [jobs, setJobs] = useState<ImageJob[]>([])
-  const [error, setError] = useState<string | null>(null)
-
-  // Active job WS (for queue status on the newly submitted job)
-  const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  const [jobsLoading, setJobsLoading] = useState(true)
+  const [hasMore, setHasMore] = useState(false)
+  const [lightbox, setLightbox] = useState<{ job: ImageJob; index: number } | null>(null)
 
   // Hugging Face model browser + download tracking
   const [showBrowser, setShowBrowser] = useState(false)
   const [downloadingModels, setDownloadingModels] = useState<Record<string, number>>({})
 
-  useWebSocket(activeJobId ? wsUrl(`/ws/image/${activeJobId}`) : null, {
-    onMessage: (raw) => {
-      const evt = raw as WsEvent
-      if (evt.type === 'queued') {
-        setQueuePosition(evt.position)
-      } else if (evt.type === 'completed') {
-        setQueuePosition(null)
-        setActiveJobId(null)
-      }
-    },
-  })
+  const promptRef = useRef<HTMLTextAreaElement>(null)
 
-  // Fetch models
-  const refreshModels = (autoSelect = false) =>
-    getModels()
-      .then((data: ImageModel[]) => {
-        setModels(data)
-        if (autoSelect && !selectedModel) {
-          const first = data.find((m) => m.status === 'ready')
-          if (first) setSelectedModel(first.id)
-        }
-      })
-      .catch(() => setError('Failed to load models'))
+  // ── Models ──────────────────────────────────────────────────────────────────
+
+  const refreshModels = useCallback(
+    () =>
+      getModels()
+        .then((data) => {
+          setModels(data)
+          // Resume tracking of downloads started before a reload.
+          const inFlight = data.filter((m) => m.status === 'downloading')
+          if (inFlight.length) {
+            setDownloadingModels((prev) => {
+              const next = { ...prev }
+              inFlight.forEach((m) => { next[m.id] = m.progress ?? next[m.id] ?? 0 })
+              return next
+            })
+          }
+          setForm((f) => {
+            const current = data.find((m) => m.id === f.modelId && m.status === 'ready')
+            if (current) return f
+            const first =
+              data.find((m) => m.status === 'ready' && m.compatible) ??
+              data.find((m) => m.status === 'ready')
+            return first ? { ...f, modelId: first.id } : f
+          })
+        })
+        .catch((e) => toast.error(`Modèles indisponibles : ${errorMessage(e)}`)),
+    [setForm],
+  )
 
   useEffect(() => {
-    refreshModels(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    refreshModels()
+    getSamplers().then((s) => s.length && setSamplers(s)).catch(() => {})
+  }, [refreshModels])
+
+  const selectedModel = models.find((m) => m.id === form.modelId)
+
+  // Picking a model applies its recommended settings (steps, CFG, size).
+  const handleModelChange = (id: string) => {
+    const m = models.find((x) => x.id === id)
+    setForm((f) => ({
+      ...f,
+      modelId: id,
+      ...(m
+        ? {
+            steps: m.recommended_steps ?? f.steps,
+            cfgScale: m.default_cfg ?? f.cfgScale,
+            width: m.default_width ?? f.width,
+            height: m.default_height ?? f.height,
+          }
+        : {}),
+    }))
+    if (m && !m.compatible) {
+      toast.info(`${m.name} demande ~${Math.round((m.min_vram_mb ?? 0) / 1024)} GB de VRAM : la génération risque d'être lente ou d'échouer.`)
+    }
+  }
 
   // Poll status of in-progress HF model downloads.
   useEffect(() => {
@@ -249,65 +167,136 @@ export default function ImageGenerationPage() {
     const interval = setInterval(() => {
       ids.forEach((id) => {
         getHFModelStatus(id)
-          .then((m: { status: string; progress?: number; error_message?: string }) => {
-            if (m.status === 'ready') {
-              setDownloadingModels((prev) => {
-                const next = { ...prev }
-                delete next[id]
-                return next
-              })
-              refreshModels()
-              toast.success('Modèle téléchargé et prêt à l\'emploi.')
-            } else if (m.status === 'error') {
-              setDownloadingModels((prev) => {
-                const next = { ...prev }
-                delete next[id]
-                return next
-              })
-              const msg = m.error_message || 'Le téléchargement du modèle a échoué.'
-              setError(msg)
-              toast.error(msg)
-            } else {
+          .then((m) => {
+            if (m.status === 'downloading') {
               setDownloadingModels((prev) => ({ ...prev, [id]: m.progress ?? 0 }))
+              return
             }
+            setDownloadingModels((prev) => {
+              const next = { ...prev }
+              delete next[id]
+              return next
+            })
+            refreshModels()
+            if (m.status === 'ready') toast.success(`${m.name} est téléchargé et prêt.`)
+            else toast.error(m.error_message || 'Le téléchargement du modèle a échoué.')
           })
-          .catch(() => {})
+          .catch(() => {
+            setDownloadingModels((prev) => {
+              const next = { ...prev }
+              delete next[id]
+              return next
+            })
+          })
       })
     }, 3000)
     return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [downloadingModels])
+  }, [downloadingModels, refreshModels])
 
   const handleDownloadStarted = (modelId: string) => {
     setDownloadingModels((prev) => ({ ...prev, [modelId]: 0 }))
     refreshModels()
   }
 
-  // Fetch job history
-  useEffect(() => {
-    getJobs()
-      .then((data: ImageJob[]) => setJobs(data))
-      .catch(() => {})
+  const handleDeleteModel = async () => {
+    if (!selectedModel || selectedModel.source !== 'downloaded') return
+    if (!window.confirm(`Supprimer ${selectedModel.name} du disque ?`)) return
+    try {
+      await deleteHFModel(selectedModel.id)
+      toast.success(`${selectedModel.name} supprimé.`)
+      setForm((f) => ({ ...f, modelId: '' }))
+      refreshModels()
+    } catch (e) {
+      toast.error(errorMessage(e))
+    }
+  }
+
+  // ── Jobs ────────────────────────────────────────────────────────────────────
+
+  const loadJobs = useCallback((offset: number) => {
+    setJobsLoading(true)
+    getJobs(PAGE_SIZE, offset)
+      .then((data) => {
+        setJobs((prev) => {
+          if (offset === 0) return data
+          const seen = new Set(prev.map((j) => j.job_id))
+          return [...prev, ...data.filter((j) => !seen.has(j.job_id))]
+        })
+        setHasMore(data.length === PAGE_SIZE)
+      })
+      .catch((e) => toast.error(`Historique indisponible : ${errorMessage(e)}`))
+      .finally(() => setJobsLoading(false))
   }, [])
 
-  const handleGenerate = async () => {
-    if (!prompt.trim()) return
-    setLoading(true)
-    setError(null)
-    setQueuePosition(null)
+  useEffect(() => loadJobs(0), [loadJobs])
 
+  const updateJob = useCallback((jobId: string, patch: Partial<ImageJob>) => {
+    setJobs((prev) => prev.map((j) => (j.job_id === jobId ? { ...j, ...patch } : j)))
+  }, [])
+
+  const removeJob = useCallback((jobId: string) => {
+    setJobs((prev) => prev.filter((j) => j.job_id !== jobId))
+  }, [])
+
+  const reuseJob = useCallback(
+    (job: ImageJob) => {
+      setForm((f) => ({
+        ...f,
+        prompt: job.prompt,
+        negativePrompt: job.negative_prompt ?? '',
+        modelId: models.some((m) => m.id === job.model_id) ? job.model_id : f.modelId,
+        sampler: job.sampler ?? f.sampler,
+        steps: job.steps,
+        cfgScale: job.cfg_scale ?? f.cfgScale,
+        width: job.width,
+        height: job.height,
+        seed: job.seed,
+        numImages: job.num_images ?? f.numImages,
+        strength: job.strength ?? f.strength,
+      }))
+      if (job.init_image) {
+        loadSource(job.init_image)
+      }
+      promptRef.current?.focus()
+      toast.info('Réglages chargés (seed incluse) — modifiez puis générez.')
+    },
+    [models, setForm],
+  )
+
+  // Load a server image (result or previous source) as the img2img source.
+  async function loadSource(url: string) {
+    try {
+      const res = await api.get(url.replace(/^\/api\/v1/, ''), { responseType: 'blob', baseURL: '/api/v1' })
+      setInitImage(await imageToDataUrl(res.data as Blob))
+    } catch (e) {
+      toast.error(`Image source indisponible : ${errorMessage(e)}`)
+    }
+  }
+
+  const openImage = useCallback((job: ImageJob, index: number) => setLightbox({ job, index }), [])
+
+  const modelNames = useMemo(() => Object.fromEntries(models.map((m) => [m.id, m.name])), [models])
+
+  // ── Generate ────────────────────────────────────────────────────────────────
+
+  const canGenerate = !submitting && !!form.prompt.trim() && selectedModel?.status === 'ready'
+
+  const handleGenerate = async () => {
+    if (!canGenerate) return
+    setSubmitting(true)
     const params: GenerateParams = {
-      prompt,
-      negative_prompt: negativePrompt,
-      model_id: selectedModel,
-      sampler,
-      steps,
-      cfg_scale: cfgScale,
-      width,
-      height,
-      seed,
-      num_images: numImages,
-      lora: lora.trim() || undefined,
+      prompt: form.prompt.trim(),
+      negative_prompt: form.negativePrompt,
+      model_id: form.modelId,
+      sampler: form.sampler,
+      steps: form.steps,
+      cfg_scale: form.cfgScale,
+      width: form.width,
+      height: form.height,
+      seed: form.seed,
+      num_images: form.numImages,
+      lora: form.lora.trim() || undefined,
+      ...(initImage ? { init_image: initImage, strength: form.strength } : {}),
     }
 
     try {
@@ -315,59 +304,99 @@ export default function ImageGenerationPage() {
       const newJob: ImageJob = {
         job_id: result.job_id,
         status: result.status ?? 'queued',
-        prompt,
+        model_id: params.model_id,
+        prompt: params.prompt,
+        negative_prompt: params.negative_prompt,
+        width: result.width ?? params.width,
+        height: result.height ?? params.height,
+        steps: params.steps,
+        cfg_scale: params.cfg_scale,
+        seed: result.seed ?? params.seed,
+        sampler: params.sampler,
+        num_images: params.num_images,
+        init_image: result.init_image,
+        strength: initImage ? form.strength : null,
+        images: [],
+        full_images: [],
         created_at: new Date().toISOString(),
         queue_position: result.queue_position,
       }
       setJobs((prev) => [newJob, ...prev])
-      setActiveJobId(result.job_id)
     } catch (e) {
-      setError('Generation failed. Please try again.')
+      toast.error(errorMessage(e, 'La génération a échoué'))
     } finally {
-      setLoading(false)
+      setSubmitting(false)
     }
   }
 
-  const handleJobCompleted = (jobId: string, images: string[]) => {
-    setJobs((prev) =>
-      prev.map((j) =>
-        j.job_id === jobId ? { ...j, status: 'completed' as const, images } : j
-      )
-    )
+  // Ctrl/Cmd + Enter generates from anywhere on the page.
+  const generateRef = useRef(handleGenerate)
+  generateRef.current = handleGenerate
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        generateRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const applyAspect = (w: number, h: number) => {
+    // Keep roughly the same pixel count as the model's native size.
+    const base = (selectedModel?.default_width ?? 512) * (selectedModel?.default_height ?? 512)
+    const k = Math.sqrt(base / (w * h))
+    setForm((f) => ({ ...f, width: roundTo8(w * k), height: roundTo8(h * k) }))
   }
 
+  const sizeOptions = (current: number) =>
+    PIXEL_SIZES.includes(current) ? PIXEL_SIZES : [...PIXEL_SIZES, current].sort((a, b) => a - b)
+
+  const activeCount = jobs.filter((j) => j.status === 'queued' || j.status === 'running').length
+  const downloadingVals = Object.values(downloadingModels)
+
   return (
-    <div className="flex h-full gap-4 p-4 overflow-hidden">
+    <div className="flex h-full flex-col md:flex-row gap-4 p-4 overflow-y-auto md:overflow-hidden">
       {/* ── Left Panel ── */}
-      <aside className="w-[35%] shrink-0 flex flex-col gap-3 overflow-y-auto pr-1">
+      <aside className="w-full md:w-[360px] lg:w-[400px] md:shrink-0 flex flex-col gap-3 md:overflow-y-auto pr-1">
         {/* Positive Prompt */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-400">Prompt</label>
+          <div className="flex items-center justify-between">
+            <label htmlFor="prompt" className="text-xs font-medium text-gray-400">Prompt</label>
+            <span className="text-[10px] text-gray-600">Ctrl+Entrée pour générer</span>
+          </div>
           <textarea
-            className="rounded-xl bg-gray-900 border border-gray-800 p-3 text-sm text-gray-100
-              resize-none h-28 focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
-            placeholder="Describe the image you want to generate..."
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            id="prompt"
+            ref={promptRef}
+            className={`${inputCls} p-3 resize-y min-h-[7rem]`}
+            placeholder="Décrivez l'image à générer…"
+            value={form.prompt}
+            onChange={(e) => set('prompt', e.target.value)}
           />
         </div>
 
         {/* Negative Prompt */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-400">Negative Prompt</label>
+          <label htmlFor="neg" className="text-xs font-medium text-gray-400">
+            Prompt négatif
+            {selectedModel && selectedModel.source === 'curated' && selectedModel.tags?.includes('flux') && (
+              <span className="ml-1 text-gray-600">(ignoré par FLUX)</span>
+            )}
+          </label>
           <textarea
-            className="rounded-xl bg-gray-900 border border-gray-800 p-3 text-sm text-gray-100
-              resize-none h-16 focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
-            placeholder="Things to avoid..."
-            value={negativePrompt}
-            onChange={(e) => setNegativePrompt(e.target.value)}
+            id="neg"
+            className={`${inputCls} p-3 resize-y min-h-[4rem]`}
+            placeholder="Ce qu'il faut éviter…"
+            value={form.negativePrompt}
+            onChange={(e) => set('negativePrompt', e.target.value)}
           />
         </div>
 
         {/* Model Selector */}
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-medium text-gray-400">Model</label>
+            <label htmlFor="model" className="text-xs font-medium text-gray-400">Modèle</label>
             <button
               type="button"
               onClick={() => setShowBrowser(true)}
@@ -376,238 +405,249 @@ export default function ImageGenerationPage() {
               <Plus className="h-3 w-3" /> Ajouter un modèle
             </button>
           </div>
-          <div className="relative">
-            <select
-              className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-3 pr-8
-                text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-            >
-              {models.length === 0 && <option value="">No models found</option>}
-              {(() => {
-                const curated = models.filter((m) => m.source === 'curated')
-                const downloaded = models.filter((m) => m.source === 'downloaded')
-                const optionLabel = (m: ImageModel) => {
-                  let label = m.name
-                  if (m.status === 'downloading') label += ' (téléchargement…)'
-                  else if (m.status === 'error') label += ' (erreur)'
-                  else if (!m.compatible) label += ' — VRAM insuffisante'
-                  return label
-                }
-                return (
-                  <>
-                    {curated.length > 0 && (
-                      <optgroup label="Recommandés">
-                        {curated.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {optionLabel(m)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {downloaded.length > 0 && (
-                      <optgroup label="Téléchargés">
-                        {downloaded.map((m) => (
-                          <option key={m.id} value={m.id} disabled={m.status !== 'ready'}>
-                            {optionLabel(m)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </>
-                )
-              })()}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-gray-500" />
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <select
+                id="model"
+                className={selectCls}
+                value={form.modelId}
+                onChange={(e) => handleModelChange(e.target.value)}
+              >
+                {models.length === 0 && <option value="">Chargement…</option>}
+                {(() => {
+                  const curated = models.filter((m) => m.source === 'curated')
+                  const downloaded = models.filter((m) => m.source === 'downloaded')
+                  const optionLabel = (m: ImageModel) => {
+                    let label = m.name
+                    if (m.status === 'downloading') label += ` (téléchargement ${m.progress ?? 0}%)`
+                    else if (m.status === 'error') label += ' (erreur)'
+                    else if (!m.compatible) label += ' — VRAM insuffisante'
+                    return label
+                  }
+                  return (
+                    <>
+                      {curated.length > 0 && (
+                        <optgroup label="Recommandés">
+                          {curated.map((m) => (
+                            <option key={m.id} value={m.id}>{optionLabel(m)}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {downloaded.length > 0 && (
+                        <optgroup label="Téléchargés">
+                          {downloaded.map((m) => (
+                            <option key={m.id} value={m.id} disabled={m.status === 'downloading'}>
+                              {optionLabel(m)}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </>
+                  )
+                })()}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-gray-500" />
+            </div>
+            {selectedModel?.source === 'downloaded' && (
+              <button
+                onClick={handleDeleteModel}
+                className="shrink-0 rounded-xl border border-gray-800 bg-gray-900 px-2.5 text-gray-500 hover:text-red-300"
+                title="Supprimer ce modèle du disque"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
           </div>
-          {Object.keys(downloadingModels).length > 0 && (() => {
-            const vals = Object.values(downloadingModels)
-            const avg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)
-            return (
-              <span className="flex items-center gap-1.5 self-start rounded-full bg-purple-500/15
-                border border-purple-500/30 px-2 py-0.5 text-[10px] text-purple-300">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Téléchargement de {vals.length} modèle(s)… {avg}%
-              </span>
-            )
-          })()}
-          {models.length > 0 && selectedModel && (() => {
-            const m = models.find((x) => x.id === selectedModel)
-            return m && m.tags && m.tags.length > 0 ? (
-              <span className="self-start rounded-full bg-purple-500/20 border border-purple-500/40
-                px-2 py-0.5 text-[10px] text-purple-300 font-medium">
-                {m.tags[0]}
-              </span>
-            ) : null
-          })()}
+          {downloadingVals.length > 0 && (
+            <span className="flex items-center gap-1.5 self-start rounded-full bg-purple-500/15
+              border border-purple-500/30 px-2 py-0.5 text-[10px] text-purple-300">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Téléchargement de {downloadingVals.length} modèle(s)…{' '}
+              {Math.round(downloadingVals.reduce((a, b) => a + b, 0) / downloadingVals.length)}%
+            </span>
+          )}
+          {selectedModel && (
+            <div className="flex flex-wrap items-center gap-1">
+              {selectedModel.gated && (
+                <span className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10
+                  px-2 py-0.5 text-[10px] text-amber-300" title="Nécessite HUGGINGFACE_TOKEN + licence acceptée">
+                  <Lock className="h-2.5 w-2.5" /> accès restreint
+                </span>
+              )}
+              {(selectedModel.tags ?? []).filter(isUsefulTag).slice(0, 3).map((t) => (
+                <span key={t} className="rounded-full bg-purple-500/20 border border-purple-500/40
+                  px-2 py-0.5 text-[10px] text-purple-300 font-medium">{t}</span>
+              ))}
+              {selectedModel.status === 'error' && (
+                <span className="text-[10px] text-red-400">{selectedModel.error_message}</span>
+              )}
+            </div>
+          )}
+          {selectedModel?.description && (
+            <p className="text-[11px] leading-snug text-gray-500">{selectedModel.description}</p>
+          )}
         </div>
 
         {/* Sampler */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-400">Sampler</label>
+          <label htmlFor="sampler" className="text-xs font-medium text-gray-400">Sampler</label>
           <div className="relative">
-            <select
-              className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-3 pr-8
-                text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
-              value={sampler}
-              onChange={(e) => setSampler(e.target.value)}
-            >
-              {SAMPLERS.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
+            <select id="sampler" className={selectCls} value={form.sampler}
+              onChange={(e) => set('sampler', e.target.value)}>
+              {samplers.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-gray-500" />
+            <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-gray-500" />
           </div>
         </div>
 
         {/* Steps Slider */}
         <div className="flex flex-col gap-1">
           <div className="flex justify-between">
-            <label className="text-xs font-medium text-gray-400">Steps</label>
-            <span className="text-xs text-purple-400 font-mono">{steps}</span>
+            <label htmlFor="steps" className="text-xs font-medium text-gray-400">Étapes</label>
+            <span className="text-xs text-purple-400 font-mono">{form.steps}</span>
           </div>
-          <input
-            type="range" min={1} max={150} value={steps}
-            onChange={(e) => setSteps(Number(e.target.value))}
-            className="w-full accent-purple-500 cursor-pointer"
-          />
+          <input id="steps" type="range" min={1} max={150} value={form.steps}
+            onChange={(e) => set('steps', Number(e.target.value))}
+            className="w-full accent-purple-500 cursor-pointer" />
         </div>
 
         {/* CFG Scale Slider */}
         <div className="flex flex-col gap-1">
           <div className="flex justify-between">
-            <label className="text-xs font-medium text-gray-400">CFG Scale</label>
-            <span className="text-xs text-purple-400 font-mono">{cfgScale.toFixed(1)}</span>
+            <label htmlFor="cfg" className="text-xs font-medium text-gray-400">CFG (fidélité au prompt)</label>
+            <span className="text-xs text-purple-400 font-mono">{form.cfgScale.toFixed(1)}</span>
           </div>
-          <input
-            type="range" min={0} max={30} step={0.5} value={cfgScale}
-            onChange={(e) => setCfgScale(Number(e.target.value))}
-            className="w-full accent-purple-500 cursor-pointer"
-          />
+          <input id="cfg" type="range" min={0} max={30} step={0.5} value={form.cfgScale}
+            onChange={(e) => set('cfgScale', Number(e.target.value))}
+            className="w-full accent-purple-500 cursor-pointer" />
         </div>
 
-        {/* Width / Height */}
+        {/* Size */}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-gray-400">Taille</span>
+            <div className="flex gap-1">
+              {ASPECTS.map((a) => (
+                <button key={a.label} type="button" onClick={() => applyAspect(a.w, a.h)}
+                  className="rounded-md border border-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400 hover:border-purple-500 hover:text-purple-300">
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {(['width', 'height'] as const).map((key) => (
+              <div key={key} className="relative">
+                <select aria-label={key === 'width' ? 'Largeur' : 'Hauteur'} className={selectCls}
+                  value={form[key]} onChange={(e) => set(key, Number(e.target.value))}>
+                  {sizeOptions(form[key]).map((s) => (
+                    <option key={s} value={s}>{key === 'width' ? 'L' : 'H'} {s}px</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-3 h-3.5 w-3.5 text-gray-500" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Seed + count */}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-400">Width</label>
-            <div className="relative">
-              <select
-                className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-2.5 pr-8
-                  text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
-                value={width}
-                onChange={(e) => setWidth(Number(e.target.value))}
-              >
-                {PIXEL_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-3 h-3.5 w-3.5 text-gray-500" />
+            <label htmlFor="seed" className="text-xs font-medium text-gray-400">
+              Seed <span className="text-gray-600">(-1 = aléatoire)</span>
+            </label>
+            <div className="flex gap-1">
+              <input id="seed" type="number" min={-1} max={MAX_SEED} className={`${inputCls} min-w-0 flex-1`}
+                value={form.seed}
+                onChange={(e) => {
+                  const v = Math.trunc(Number(e.target.value))
+                  set('seed', Number.isFinite(v) ? Math.min(MAX_SEED, Math.max(-1, v)) : -1)
+                }} />
+              <button type="button" onClick={() => set('seed', -1)} title="Seed aléatoire"
+                className="shrink-0 rounded-xl border border-gray-800 bg-gray-900 px-2 text-gray-400 hover:text-purple-300">
+                <Dices className="h-4 w-4" />
+              </button>
             </div>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-400">Height</label>
+            <label htmlFor="num" className="text-xs font-medium text-gray-400">Nombre d'images</label>
             <div className="relative">
-              <select
-                className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-2.5 pr-8
-                  text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
-                value={height}
-                onChange={(e) => setHeight(Number(e.target.value))}
-              >
-                {PIXEL_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
+              <select id="num" className={selectCls} value={form.numImages}
+                onChange={(e) => set('numImages', Number(e.target.value))}>
+                {NUM_IMAGES_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-3 h-3.5 w-3.5 text-gray-500" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-gray-500" />
             </div>
           </div>
         </div>
 
-        {/* Seed */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-400">Seed <span className="text-gray-600">(-1 = random)</span></label>
-          <input
-            type="number"
-            className="rounded-xl bg-gray-900 border border-gray-800 p-2.5 text-sm text-gray-100
-              focus:outline-none focus:border-purple-500 transition-colors"
-            value={seed}
-            onChange={(e) => setSeed(Number(e.target.value))}
-          />
-        </div>
-
-        {/* Num Images */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-400">Number of Images</label>
-          <div className="relative">
-            <select
-              className="w-full appearance-none rounded-xl bg-gray-900 border border-gray-800 p-2.5 pr-8
-                text-sm text-gray-100 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
-              value={numImages}
-              onChange={(e) => setNumImages(Number(e.target.value))}
-            >
-              {NUM_IMAGES_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-gray-500" />
-          </div>
-        </div>
+        <InitImagePicker
+          value={initImage}
+          onChange={setInitImage}
+          strength={form.strength}
+          onStrengthChange={(v) => set('strength', v)}
+        />
 
         {/* LoRA */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-400">
-            LoRA <span className="text-gray-600">(HF repo, optionnel)</span>
+          <label htmlFor="lora" className="text-xs font-medium text-gray-400">
+            LoRA <span className="text-gray-600">(dépôt HF, optionnel)</span>
           </label>
-          <input
-            className="rounded-xl bg-gray-900 border border-gray-800 p-2.5 text-sm text-gray-100
-              focus:outline-none focus:border-purple-500 transition-colors placeholder-gray-600"
-            placeholder="ex. ostris/super-cereal-sdxl-lora"
-            value={lora}
-            onChange={(e) => setLora(e.target.value)}
-          />
+          <input id="lora" className={inputCls} placeholder="ex. ostris/super-cereal-sdxl-lora"
+            value={form.lora} onChange={(e) => set('lora', e.target.value)} />
         </div>
-
-        {/* Error */}
-        {error && (
-          <p className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-400">
-            {error}
-          </p>
-        )}
-
-        {/* Queue Status */}
-        {queuePosition !== null && (
-          <p className="rounded-lg bg-yellow-500/10 border border-yellow-500/30 px-3 py-2 text-xs text-yellow-300">
-            Queued — position {queuePosition}
-          </p>
-        )}
 
         {/* Generate Button */}
         <button
-          className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600
+          className="sticky bottom-0 mt-1 flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600
             hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed
-            px-4 py-3 text-sm font-semibold text-white transition-colors"
+            px-4 py-3 text-sm font-semibold text-white transition-colors shadow-lg shadow-black/40"
           onClick={handleGenerate}
-          disabled={loading || !prompt.trim()}
+          disabled={!canGenerate}
+          title={selectedModel && selectedModel.status !== 'ready' ? "Ce modèle n'est pas prêt" : undefined}
         >
-          {loading ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            'Generate'
-          )}
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {submitting ? 'Envoi…' : activeCount > 0 ? `Générer (${activeCount} en cours)` : 'Générer'}
         </button>
       </aside>
 
       {/* ── Right Panel ── */}
-      <main className="flex-1 overflow-y-auto">
-        <h2 className="mb-3 text-sm font-semibold text-gray-400">Job History</h2>
+      <main className="flex-1 md:overflow-y-auto">
+        <h2 className="mb-3 text-sm font-semibold text-gray-400">Historique</h2>
         {jobs.length === 0 ? (
           <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-xl
             border border-dashed border-gray-800 text-gray-600">
-            <ImageIcon className="h-10 w-10" />
-            <p className="text-sm">No jobs yet — generate an image to get started</p>
+            {jobsLoading ? <Loader2 className="h-8 w-8 animate-spin" /> : <ImageIcon className="h-10 w-10" />}
+            {!jobsLoading && <p className="text-sm">Aucune génération — lancez votre première image</p>}
           </div>
         ) : (
-          <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
-            {jobs.map((job) => (
-              <JobCard key={job.job_id} job={job} onJobCompleted={handleJobCompleted} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
+              {jobs.map((job) => (
+                <JobCard
+                  key={job.job_id}
+                  job={job}
+                  modelName={modelNames[job.model_id]}
+                  onUpdate={updateJob}
+                  onRemove={removeJob}
+                  onReuse={reuseJob}
+                  onOpenImage={openImage}
+                />
+              ))}
+            </div>
+            {hasMore && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={() => loadJobs(jobs.length)}
+                  disabled={jobsLoading}
+                  className="flex items-center gap-2 rounded-lg border border-gray-800 px-4 py-2 text-xs text-gray-300 hover:bg-gray-900 disabled:opacity-50"
+                >
+                  {jobsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Charger plus
+                </button>
+              </div>
+            )}
+          </>
         )}
       </main>
 
@@ -616,6 +656,22 @@ export default function ImageGenerationPage() {
         onClose={() => setShowBrowser(false)}
         onDownloadStarted={handleDownloadStarted}
       />
+
+      {lightbox && (
+        <Lightbox
+          images={lightbox.job.full_images}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox((lb) => (lb ? { ...lb, index } : lb))}
+          onClose={() => setLightbox(null)}
+          caption={`${lightbox.job.prompt} — seed ${lightbox.job.seed}`}
+          onUseAsSource={(i) => {
+            loadSource(lightbox.job.full_images[i]).then(() =>
+              toast.success('Image définie comme source — ajustez le prompt puis générez.'),
+            )
+            setLightbox(null)
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -25,7 +25,7 @@ async def export_model(
             raise ValueError(f"Unknown architecture: {arch_id}")
 
         model = spec.builder(arch_config)
-        ckpt = torch.load(checkpoint_path, map_location="cpu")
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
         model.load_state_dict(ckpt["model_state"])
         model.eval()
 
@@ -56,7 +56,7 @@ async def export_model(
         else:
             raise ValueError(f"Unsupported format: {export_format}")
 
-    return await asyncio.get_event_loop().run_in_executor(None, _export)
+    return await asyncio.to_thread(_export)
 
 
 def _make_dummy_input(arch_id: str, arch_config: dict):

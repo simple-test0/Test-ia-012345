@@ -2,6 +2,7 @@
   "name": "ai-studio-frontend",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -38,5 +39,8 @@
     "tailwindcss": "^3.4.14",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

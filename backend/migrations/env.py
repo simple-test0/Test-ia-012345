@@ -11,7 +11,8 @@ import models  # noqa: F401
 
 config = context.config
 
-# Use a synchronous SQLite URL for migrations.
+# Use a synchronous SQLite URL for migrations (create the folder on a fresh install).
+settings.db_path.parent.mkdir(parents=True, exist_ok=True)
 sync_url = f"sqlite:///{settings.db_path}"
 config.set_main_option("sqlalchemy.url", sync_url)
 

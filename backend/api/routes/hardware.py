@@ -6,11 +6,15 @@ from hardware.recommender import recommend
 router = APIRouter(prefix="/hardware", tags=["hardware"])
 
 
+# Plain `def` routes: FastAPI runs them in a worker thread, so hardware probing
+# (psutil, torch) never blocks the event loop.
 @router.get("/info")
-async def hardware_info():
+def hardware_info():
     hw = detect_hardware_cached()
     return {
         "cuda_available": hw.cuda_available,
+        "mps_available": hw.mps_available,
+        "accelerator": hw.accelerator,
         "platform": hw.platform,
         "gpus": [
             {
@@ -40,7 +44,7 @@ async def hardware_info():
 
 
 @router.get("/recommendations")
-async def hardware_recommendations():
+def hardware_recommendations():
     hw = detect_hardware_cached()
     rec = recommend(hw)
     return {

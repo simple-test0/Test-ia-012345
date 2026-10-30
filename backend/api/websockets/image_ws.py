@@ -13,6 +13,11 @@ async def image_websocket(websocket: WebSocket, job_id: str, token: str = ""):
         return
     await ws_manager.connect(job_id, websocket)
     try:
+        # Catch-up for clients connecting after the job started (or reconnecting).
+        worker = getattr(websocket.app.state, "generation_worker", None)
+        snapshot = worker.status(job_id) if worker else None
+        if snapshot:
+            await websocket.send_json(snapshot)
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
